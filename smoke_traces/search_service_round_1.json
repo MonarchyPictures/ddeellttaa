@@ -1,0 +1,105 @@
+{
+  "round": 1,
+  "timestamp": "2026-02-26T00:04:19.110964+00:00",
+  "request": {
+    "query": "looking to buy water tank in nairobi budget 80k urgent pass2-r1-728f3289",
+    "location": "Nairobi, Kenya"
+  },
+  "response": {
+    "status": "no_results",
+    "count": 0,
+    "message": "No leads found. Try different keywords.",
+    "total_signals_captured": 30,
+    "metrics": {
+      "scrapers_run": [
+        "serpapi",
+        "google_cse",
+        "telegram",
+        "facebook",
+        "kenyan_forums",
+        "twitter",
+        "jiji",
+        "pigiame",
+        "google_maps",
+        "whatsapp_groups",
+        "duckduckgo"
+      ],
+      "scraper_results": {
+        "serpapi": 8,
+        "google_cse": 10,
+        "telegram": 0,
+        "facebook": "ERROR: TIMEOUT>15s",
+        "kenyan_forums": "ERROR: TIMEOUT>15s",
+        "twitter": "ERROR: TIMEOUT>15s",
+        "jiji": 0,
+        "pigiame": 0,
+        "google_maps": 9,
+        "whatsapp_groups": 1,
+        "duckduckgo": 2
+      },
+      "total_found": 30,
+      "total_processed": 0,
+      "total_shown": 0,
+      "execution_order": [
+        {
+          "position": 1,
+          "name": "serpapi",
+          "priority": 30
+        },
+        {
+          "position": 2,
+          "name": "google_cse",
+          "priority": 20
+        },
+        {
+          "position": 3,
+          "name": "telegram",
+          "priority": 25
+        },
+        {
+          "position": 4,
+          "name": "facebook",
+          "priority": 15
+        },
+        {
+          "position": 5,
+          "name": "kenyan_forums",
+          "priority": 15
+        },
+        {
+          "position": 6,
+          "name": "twitter",
+          "priority": 15
+        },
+        {
+          "position": 7,
+          "name": "jiji",
+          "priority": 15
+        },
+        {
+          "position": 8,
+          "name": "pigiame",
+          "priority": 15
+        },
+        {
+          "position": 9,
+          "name": "google_maps",
+          "priority": 15
+        },
+        {
+          "position": 10,
+          "name": "whatsapp_groups",
+          "priority": 10
+        },
+        {
+          "position": 11,
+          "name": "duckduckgo",
+          "priority": 10
+        }
+      ],
+      "processing_mode": "direct"
+    },
+    "lead_sample": []
+  },
+  "timing_ms": 33335
+}

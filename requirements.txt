@@ -1,0 +1,33 @@
+# Core API 
+fastapi 
+uvicorn[standard] 
+pydantic[email] 
+pydantic-settings 
+python-dotenv 
+python-multipart 
+
+# Database 
+sqlalchemy[asyncio] 
+psycopg2-binary 
+redis 
+celery 
+
+# Scraping 
+httpx>=0.25.0 
+beautifulsoup4 
+playwright 
+ddgs
+
+# Validation 
+phonenumbers 
+email-validator 
+
+# Utilities 
+geopy 
+apscheduler 
+
+# Optional: Telegram (uncomment when ready) 
+telethon>=1.36.0 
+
+# Optional: AI Classification (uncomment when ready)  
+# openai

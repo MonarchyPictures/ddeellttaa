@@ -1,0 +1,22 @@
+{
+  "round": 3,
+  "timestamp": "2026-02-26T00:17:07.544986+00:00",
+  "query": "looking to buy water tank in nairobi budget 80k urgent blockerfix-3-3ae196",
+  "status": "no_results",
+  "count": 0,
+  "total_signals_captured": 41,
+  "scraper_results": {
+    "serpapi": 10,
+    "google_cse": 8,
+    "telegram": 0,
+    "facebook": "FALLBACK:1 (TIMEOUT>15s)",
+    "kenyan_forums": "FALLBACK:8 (TIMEOUT>15s)",
+    "twitter": "FALLBACK:2 (TIMEOUT>15s)",
+    "jiji": 0,
+    "pigiame": 0,
+    "google_maps": 10,
+    "whatsapp_groups": 1,
+    "duckduckgo": 1
+  },
+  "sample": []
+}

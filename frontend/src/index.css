@@ -1,0 +1,145 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Primary Colors */
+  --primary: #3B82F6;
+  --primary-dark: #1E40AF;
+  --primary-light: #93C5FD;
+  
+  /* Secondary & Accent */
+  --secondary: #10B981;
+  --accent: #F59E0B;
+  
+  /* Neutral Colors */
+  --neutral: #6B7280;
+  --neutral-dark: #1F2937;
+  --neutral-light: #F9FAFB;
+  --border-color: #E5E7EB;
+  
+  /* Semantic Colors */
+  --success: #10B981;
+  --warning: #F59E0B;
+  --error: #EF4444;
+  
+  /* Layout */
+  --header-height: 64px;
+  --sidebar-width: 280px;
+  --max-width: 1200px;
+  
+  /* Spacing Base: 8px */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 16px;
+  --space-4: 24px;
+  --space-5: 32px;
+  --space-6: 48px;
+}
+
+/* Force Mobile Scaling Fix */
+* {
+  box-sizing: border-box;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+    scroll-behavior: smooth;
+    overflow-x: hidden;
+  }
+  
+  body {
+    @apply bg-[#F9FAFB] text-[#1F2937] overflow-x-hidden;
+    margin: 0;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+      'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+      sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1 { @apply text-[32px] font-semibold leading-tight; }
+  h2 { @apply text-[22px] font-semibold leading-snug; }
+  h3 { @apply text-[18px] font-semibold leading-normal; }
+  p { @apply text-[16px] font-normal leading-relaxed; }
+  small { @apply text-[14px] font-normal; }
+
+  /* Prevent auto-zoom on iOS inputs */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center font-medium rounded-md transition-all active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  
+  .btn-primary {
+    @apply btn bg-[#3B82F6] text-white hover:bg-[#1E40AF] shadow-sm;
+  }
+  
+  .btn-secondary {
+    @apply btn bg-[#10B981] text-white hover:bg-[#059669] shadow-sm;
+  }
+  
+  .btn-ghost {
+    @apply btn bg-transparent text-[#6B7280] hover:bg-[#F3F4F6] hover:text-[#1F2937];
+  }
+  
+  .btn-danger {
+    @apply btn bg-[#EF4444] text-white hover:bg-[#DC2626] shadow-sm;
+  }
+
+  .btn-s { @apply h-8 px-3 text-sm; }
+  .btn-m { @apply h-10 px-4 text-base; }
+  .btn-l { @apply h-12 px-6 text-lg; }
+
+  .card {
+    @apply bg-white rounded-lg border border-[#E5E7EB] shadow-sm p-6;
+  }
+
+  .input-group {
+    @apply flex flex-col gap-1;
+  }
+
+  .label {
+    @apply text-sm font-medium text-[#1F2937];
+  }
+
+  .input {
+    @apply h-10 px-3 rounded-md border border-[#D1D5DB] bg-white text-base focus:outline-none focus:border-[#3B82F6] focus:ring-4 focus:ring-[#3B82F6]/10 transition-all;
+  }
+
+  .table-container {
+    @apply overflow-x-auto bg-white rounded-lg border border-[#E5E7EB] shadow-sm;
+  }
+
+  .table {
+    @apply w-full text-left border-collapse;
+  }
+
+  .table-th {
+    @apply h-12 px-4 bg-[#F9FAFB] text-sm font-semibold text-[#6B7280] border-b border-[#E5E7EB];
+  }
+
+  .table-td {
+    @apply h-12 px-4 text-sm text-[#1F2937] border-b border-[#E5E7EB] hover:bg-[#F9FAFB] transition-colors;
+  }
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .container-custom {
+    @apply max-w-[1200px] mx-auto px-6 w-full;
+  }
+}

@@ -1,0 +1,36 @@
+﻿{
+    "round":  3,
+    "timestamp_utc":  "2026-02-25T23:38:44.7986101Z",
+    "request":  {
+                    "query":  "water tank",
+                    "location":  "Kenya",
+                    "include_telegram":  false,
+                    "include_all":  true,
+                    "min_score":  0
+                },
+    "response_http_status":  200,
+    "response_status":  "success",
+    "response_count":  14,
+    "response_message":  "Found 14 buyers (0 from Telegram)",
+    "elapsed_seconds":  0.11,
+    "top_results":  [
+                        {
+                            "title":  "Looking for a durable and affordable 2000-litre water tank in Kenya ?",
+                            "source":  "google",
+                            "url":  "https://laomate.activeboard.com/t71738543/looking-for-a-durable-and-affordable-2000-litre-water-tank-i/?page=1",
+                            "ranked_score":  0.65
+                        },
+                        {
+                            "title":  "Galvanized Steel Water Tanks in Kenya",
+                            "source":  "google",
+                            "url":  "https://www.refinareastafrica.com/galvanized-steel-water-tanks-in-kenya/",
+                            "ranked_score":  0.428
+                        },
+                        {
+                            "title":  "Affordable Steel Water Storage Tanks For Kenya",
+                            "source":  "google",
+                            "url":  "https://abecotanks.co.za/affordable-steel-water-storage-tanks-kenya/",
+                            "ranked_score":  0.295
+                        }
+                    ]
+}

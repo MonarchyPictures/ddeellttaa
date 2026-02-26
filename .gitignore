@@ -1,0 +1,19 @@
+.venv/
+__pycache__/
+*.db
+*.db-wal
+*.db-shm
+*.log
+.env
+node_modules/
+dist/
+.DS_Store
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# Celery
+celery_broker.db
+celery_results.db
+celerybeat-schedule
+intent_radar_v3.db
