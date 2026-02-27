@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import getApiUrl, { getApiKey } from '../config';
 import { Settings as SettingsIcon, Shield, Zap, Globe, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 const Settings = () => {
@@ -8,56 +7,59 @@ const Settings = () => {
   const [error, setError] = useState(null);
   const [updating, setUpdating] = useState(null);
 
-  const resolveApiBaseUrl = () => {
-    const apiUrl = getApiUrl();
-    if (apiUrl.startsWith('http://') || apiUrl.startsWith('https://')) {
-      return apiUrl.replace(/\/$/, '');
-    }
-    if (import.meta.env.DEV) {
-      return `http://localhost:8001${apiUrl}`.replace(/\/$/, '');
-    }
-    return `${window.location.protocol}//${window.location.host}${apiUrl}`.replace(/\/$/, '');
-  };
-
-  const normalizeScrapersPayload = (payload) => {
-    if (!payload) return {};
-    if (Array.isArray(payload)) {
-      return payload.reduce((acc, item, idx) => {
-        const name = item?.name || item?.id || `Scraper${idx + 1}`;
-        acc[name] = {
-          enabled: Boolean(item?.enabled),
-          core: Boolean(item?.core),
-          mode: item?.mode || 'production',
-          cost: item?.cost || 'free',
-          noise: item?.noise || 'low',
-          categories: item?.categories || ['general'],
-          metrics: item?.metrics || {}
-        };
-        return acc;
-      }, {});
-    }
-    if (payload.scrapers && typeof payload.scrapers === 'object') return payload.scrapers;
-    if (payload.data && typeof payload.data === 'object') return payload.data;
-    return typeof payload === 'object' ? payload : {};
-  };
-
   const fetchScrapers = async () => {
     try {
-      const apiUrl = resolveApiBaseUrl();
-      const apiKey = getApiKey();
-      const res = await fetch(`${apiUrl}/scrapers/`, {
-        headers: { 'X-API-Key': apiKey }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const normalized = normalizeScrapersPayload(data);
-        setScrapers(normalized);
-        setError(null);
-      } else {
-        setError(`Failed to fetch scrapers (${res.status})`);
+      // Try relative URLs first
+      const urls = ['/api/scrapers/', '/api/scrapers'];
+      let response = null;
+      let lastError = null;
+
+      for (const url of urls) {
+        try {
+          console.log('[Settings] Fetching:', url);
+          const res = await fetch(url, {
+            headers: { 'Accept': 'application/json' }
+          });
+          if (res.ok) {
+            response = res;
+            break;
+          }
+        } catch (e) {
+          lastError = e;
+          console.log('[Settings] Failed:', url);
+        }
       }
+
+      if (!response) {
+        throw lastError || new Error('Failed to fetch from all URLs');
+      }
+
+      const data = await response.json();
+      console.log('[Settings] Data received:', Object.keys(data));
+
+      // The API returns { scraperName: { ... } }
+      // Validate and normalize
+      const normalized = {};
+      for (const [name, scraperData] of Object.entries(data)) {
+        if (typeof scraperData === 'object' && scraperData !== null) {
+          normalized[name] = {
+            enabled: Boolean(scraperData.enabled),
+            core: Boolean(scraperData.core),
+            mode: scraperData.mode || 'production',
+            cost: scraperData.cost || 'free',
+            noise: scraperData.noise || 'low',
+            categories: scraperData.categories || ['general'],
+            metrics: scraperData.metrics || {}
+          };
+        }
+      }
+
+      console.log('[Settings] Normalized:', Object.keys(normalized));
+      setScrapers(normalized);
+      setError(null);
     } catch (err) {
-      setError(`Connection error${err?.message ? `: ${err.message}` : ''}`);
+      console.error('[Settings] Error:', err);
+      setError('Connection error: ' + (err?.message || 'Unknown'));
     } finally {
       setLoading(false);
     }
@@ -70,16 +72,10 @@ const Settings = () => {
   const toggleScraper = async (name, currentState) => {
     setUpdating(name);
     try {
-      const apiUrl = resolveApiBaseUrl();
-      const apiKey = getApiKey();
       const newState = !currentState;
-      
-      const res = await fetch(`${apiUrl}/scrapers/toggle?name=${name}&enabled=${newState}`, {
+      const res = await fetch(`/api/scrapers/toggle?name=${name}&enabled=${newState}`, {
         method: 'POST',
-        headers: { 
-          'X-API-Key': apiKey,
-          'x-role': 'user'
-        }
+        headers: { 'x-role': 'user' }
       });
 
       if (res.ok) {
@@ -88,21 +84,25 @@ const Settings = () => {
           [name]: { ...prev[name], enabled: newState }
         }));
       } else {
-        const data = await res.json();
-        alert(data.detail || "Failed to update scraper");
+        alert('Failed to update scraper');
       }
     } catch (err) {
-      alert("Network error updating scraper");
+      alert('Network error');
     } finally {
       setUpdating(null);
     }
   };
 
-  if (loading) return (
-    <div className="flex-1 flex items-center justify-center bg-black">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-    </div>
-  );
+  if (loading) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-black">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
+
+  const scraperEntries = Object.entries(scrapers);
+  console.log('[Settings] Rendering scrapers:', scraperEntries.length);
 
   return (
     <div className="flex-1 overflow-y-auto bg-black p-4 md:p-8">
@@ -125,6 +125,11 @@ const Settings = () => {
           </div>
         )}
 
+        {/* Debug Info */}
+        <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-2xl">
+          <p className="text-yellow-500 text-xs font-mono">DEBUG: Found {scraperEntries.length} scrapers</p>
+        </div>
+
         {/* Scrapers Section */}
         <section className="space-y-4">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
@@ -133,49 +138,43 @@ const Settings = () => {
               <h3 className="text-lg font-black uppercase tracking-widest italic">Signal Scrapers</h3>
             </div>
             <span className="text-[10px] font-black bg-white/5 px-3 py-1 rounded-full text-white/40 uppercase tracking-widest">
-              {Object.keys(scrapers).length} Available
+              {scraperEntries.length} Available
             </span>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {Object.entries(scrapers).map(([name, data]) => (
-              <div key={name} className={`p-5 rounded-3xl border transition-all duration-300 ${data.enabled ? 'bg-white/5 border-white/10' : 'bg-black border-white/5 opacity-60'}`}>
-                <div className="flex items-start justify-between mb-4">
-                  <div className="space-y-1">
-                    <h4 className="font-black text-sm uppercase tracking-tight flex items-center gap-2">
-                      {name.replace('Scraper', '')}
-                      {data.core && <Shield size={12} className="text-blue-500" title="Core Scraper" />}
-                    </h4>
-                    <div className="flex flex-wrap gap-2">
-                      <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${data.cost === 'free' ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
-                        {data.cost}
-                      </span>
-                      <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-white/5 text-white/40">
-                        {data.noise} noise
-                      </span>
-                      {data.mode === 'bootstrap' && (
-                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-500">
-                          Bootstrap
+          {scraperEntries.length === 0 ? (
+            <div className="p-8 text-center border border-white/10 rounded-2xl">
+              <p className="text-white/40">No scrapers found. Check connection.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {scraperEntries.map(([name, data]) => (
+                <div key={name} className={`p-5 rounded-3xl border transition-all duration-300 ${data.enabled ? 'bg-white/5 border-white/10' : 'bg-black border-white/5 opacity-60'}`}>
+                  <div className="flex items-start justify-between mb-4">
+                    <div className="space-y-1">
+                      <h4 className="font-black text-sm uppercase tracking-tight flex items-center gap-2">
+                        {name.replace('Scraper', '')}
+                        {data.core && <Shield size={12} className="text-blue-500" title="Core Scraper" />}
+                      </h4>
+                      <div className="flex flex-wrap gap-2">
+                        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md ${data.cost === 'free' ? 'bg-green-500/10 text-green-500' : 'bg-yellow-500/10 text-yellow-500'}`}>
+                          {data.cost}
                         </span>
-                      )}
+                        <span className="text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-md bg-white/5 text-white/40">
+                          {data.noise} noise
+                        </span>
+                      </div>
                     </div>
+                    
+                    <button
+                      onClick={() => toggleScraper(name, data.enabled)}
+                      disabled={updating === name || data.core}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${data.enabled ? 'bg-blue-600' : 'bg-white/10'} ${data.core ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${data.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </button>
                   </div>
-                  
-                  <button
-                    onClick={() => toggleScraper(name, data.enabled)}
-                    disabled={updating === name || data.core}
-                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${data.enabled ? 'bg-blue-600' : 'bg-white/10'} ${data.core ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'}`}
-                  >
-                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${data.enabled ? 'translate-x-6' : 'translate-x-1'}`} />
-                  </button>
-                </div>
 
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2 text-[10px] text-white/40 font-bold uppercase tracking-widest">
-                    <Globe size={12} />
-                    <span>Categories: {data.categories ? data.categories.join(', ') : 'All'}</span>
-                  </div>
-                  
                   {data.metrics && (
                     <div className="grid grid-cols-3 gap-2 pt-3 border-t border-white/5">
                       <div className="text-center">
@@ -193,9 +192,9 @@ const Settings = () => {
                     </div>
                   )}
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Info Card */}

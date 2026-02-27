@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from ddgs import DDGS
 from googlesearch import search as google_search
-from scraper import LeadScraper
 
 from app.utils.normalization import LeadValidator
 from app.nlp.intent_service import BuyingIntentNLP
@@ -24,7 +23,6 @@ class SpecialOpsAgent:
     
     def __init__(self):
         self.ddgs = DDGS()
-        self.scraper = LeadScraper()
         self.compliance = ComplianceManager()
         self.intent_service = BuyingIntentNLP()
         self.validator = LeadValidator()
@@ -191,12 +189,13 @@ class SpecialOpsAgent:
                 
                 print(f"🔎 Query: {search_q} (Source: {source})")
                 
-                # DuckDuckGo is the primary driver in scraper.py
+                # DuckDuckGo search using ddgs directly
                 # Add retry logic and error handling
                 scraper_results = []
                 for attempt in range(2):
                     try:
-                        scraper_results = self.scraper.duckduckgo_search(search_q, location=location, source=source)
+                        results = self.ddgs.text(search_q, region='ke-ke', max_results=10)
+                        scraper_results = [{"text": r.get("body", ""), "url": r.get("href", "")} for r in results]
                         if scraper_results: break
                         time.sleep(random.uniform(3, 6))
                     except Exception as e:

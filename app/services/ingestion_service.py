@@ -25,10 +25,26 @@ def ingest_signal(db: Session, signal: Dict[str, Any], product_query: str = "Unk
     2. Runs Intelligence Layer (v2).
     3. Enforces FLOOR threshold.
     4. Maps to 10-field Lead schema.
+    
+    KENYA-ONLY: Rejects any signal that is not explicitly from Kenya.
     """
+    from app.services.validation_service import VALIDATION_SERVICE
+    
     raw_text = signal.get("text", "")
     source = signal.get("source", "unknown")
     source_url = signal.get("url")
+    location = signal.get("location", "Kenya")
+    
+    # --- KENYA LOCKING: STRICT LOCATION CHECK ---
+    # Reject any signal not explicitly from Kenya
+    if VALIDATION_SERVICE.is_foreign_content(raw_text, source_url):
+        logger.info(f"SIGNAL REJECTED (Kenya-Only Policy): {source} - Content not from Kenya")
+        return False
+    
+    # Also check location field
+    if location and not any(loc in location.lower() for loc in ["kenya", "nairobi", "mombasa", "kisumu", "nakuru", "eldoret", "thika"]):
+        logger.info(f"SIGNAL REJECTED (Kenya-Only Policy): Location '{location}' not in Kenya")
+        return False
     
     # --- LAYER 1 & 4: STRICT PRE-FILTER ---
     # Before any scoring, check if this is a valid buyer signal

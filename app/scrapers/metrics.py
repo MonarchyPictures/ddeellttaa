@@ -304,8 +304,16 @@ def record_category_lead(category: str, is_verified: bool):
 def get_metrics(name: Optional[str] = None):
     """Return metrics for one or all scrapers."""
     def format_metric(m):
+        if not m:
+            return {
+                "runs": 0, "leads": 0, "verified": 0, "failures": 0,
+                "consecutive_failures": 0, "avg_latency": 0.0, "avg_confidence": 0.0,
+                "avg_freshness": 0.0, "avg_geo_score": 0.0, "priority_score": 0.0,
+                "priority_boost": 1.0, "auto_disabled": False, "last_success": None,
+                "history": []
+            }
         res = dict(m)
-        res["history"] = list(m["history"])
+        res["history"] = list(m.get("history", []))
         return res
 
     if name:

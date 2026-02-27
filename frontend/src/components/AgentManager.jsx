@@ -1,6 +1,45 @@
 import React, { useState, useEffect } from 'react';
 import { fetchAgents, createAgent, deleteAgent, exportAgentLeads, stopAgent } from '../utils/api';
 
+// Direct API call for sync run (bypasses Celery)
+const runAgentSync = async (agentId) => {
+  console.log('[runAgentSync] Called with agentId:', agentId);
+  
+  if (!agentId) {
+    console.error('[runAgentSync] ERROR: agentId is null/undefined');
+    return { status: 'error', message: 'Agent ID is missing' };
+  }
+  
+  // Ensure agentId is a string
+  const id = String(agentId).trim();
+  console.log('[runAgentSync] Using ID:', id);
+  
+  try {
+    const url = `/api/agents/${id}/run-sync`;
+    console.log('[runAgentSync] Fetching:', url);
+    
+    const response = await fetch(url, { 
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    
+    console.log('[runAgentSync] Response status:', response.status);
+    
+    if (!response.ok) {
+      const text = await response.text();
+      console.error('[runAgentSync] HTTP Error:', response.status, text);
+      throw new Error(`HTTP ${response.status}: ${text}`);
+    }
+    
+    const data = await response.json();
+    console.log('[runAgentSync] Response data:', data);
+    return data;
+  } catch (error) {
+    console.error('[runAgentSync] Error:', error);
+    return { status: 'error', message: error.message };
+  }
+};
+
 const AgentManager = () => {
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -26,19 +65,41 @@ const AgentManager = () => {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    console.log("[AgentManager] Submitting form:", formData);
     setLoading(true);
-    const result = await createAgent(formData);
-    if (result && !result.error) {
-      setAgents([...agents, result]);
-      setShowCreate(false);
-      setFormData({
-        name: '',
-        query: '',
-        location: 'Kenya',
-        interval_hours: 2,
-        duration_days: 7
-      });
+    
+    try {
+      const result = await createAgent(formData);
+      console.log("[AgentManager] Create result:", result);
+      
+      // Success: result has id and no error
+      if (result && result.id && !result.error) {
+        console.log("[AgentManager] Agent created:", result.id);
+        setAgents([...agents, result]);
+        setShowCreate(false);
+        setFormData({
+          name: '',
+          query: '',
+          location: 'Kenya',
+          interval_hours: 2,
+          duration_days: 7
+        });
+      } 
+      // Explicit error from API
+      else if (result && result.error) {
+        console.error("[AgentManager] API error:", result.error);
+        alert("Failed to create agent: " + result.error);
+      } 
+      // Unexpected response format
+      else {
+        console.error("[AgentManager] Invalid response:", result);
+        alert("Failed to create agent: Server returned unexpected response");
+      }
+    } catch (err) {
+      console.error("[AgentManager] Exception:", err);
+      alert("Error creating agent: " + (err.message || "Network error - check console"));
     }
+    
     setLoading(false);
   };
 
@@ -55,6 +116,29 @@ const AgentManager = () => {
         // Refresh local state
         setAgents(agents.map(a => a.id === id ? { ...a, active: false } : a));
     }
+  };
+
+  const handleRunSync = async (id, name) => {
+    if (!window.confirm(`Run agent "${name}" now? This will execute immediately without Celery.`)) {
+      return;
+    }
+    setLoading(true);
+    try {
+      const result = await runAgentSync(id);
+      console.log("[AgentManager] Run sync result:", result);
+      
+      if (result.status === 'success') {
+        alert(`Agent "${name}" executed successfully!\n\nResult: ${result.result}`);
+        // Refresh agents to show updated last_run
+        await loadAgents();
+      } else {
+        alert(`Failed to run agent: ${result.message}`);
+      }
+    } catch (err) {
+      console.error("[AgentManager] Run sync error:", err);
+      alert("Error running agent: " + err.message);
+    }
+    setLoading(false);
   };
 
   const handleExport = async (id) => {
@@ -228,6 +312,17 @@ const AgentManager = () => {
                             title="Stop Agent"
                         >
                             🛑 Stop
+                        </button>
+                    )}
+
+                    {agent.active && (
+                        <button 
+                            onClick={() => handleRunSync(String(agent.id), agent.name)}
+                            disabled={loading}
+                            className="bg-blue-900/50 hover:bg-blue-900 text-blue-300 px-3 py-1.5 rounded text-sm flex items-center gap-1 transition-colors disabled:opacity-50"
+                            title="Run Now (No Celery needed)"
+                        >
+                            ▶️ Run Now
                         </button>
                     )}
 

@@ -4,6 +4,11 @@
 # ============================================================
 
 import os
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 # --- MODE ---
 HIGH_RECALL_MODE = True

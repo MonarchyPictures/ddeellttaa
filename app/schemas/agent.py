@@ -27,5 +27,4 @@ class AgentResponse(BaseModel):
     high_intent_count: int = 0
     last_run: Optional[datetime] = None
 
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}

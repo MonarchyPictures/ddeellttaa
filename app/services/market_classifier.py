@@ -165,9 +165,17 @@ def is_valid_buyer(text: str, url: str = None) -> bool:
     ])
 
     # Seller-heavy text with no explicit buyer signal is not a buyer lead.
-    if seller_soft_hits >= 1 and not has_buyer_phrase and not has_first_person:
-        logger.debug("REJECTED (Seller-heavy text)")
-        return False
+    # RELAXED for HIGH_RECALL_MODE: Allow more leads through
+    if HIGH_RECALL_MODE:
+        # In high recall mode, only reject if strong seller signals AND no buyer evidence at all
+        if seller_soft_hits >= 3 and not has_buyer_phrase and not has_request_verb:
+            logger.debug("REJECTED (Strong seller signals in high recall mode)")
+            return False
+    else:
+        # Standard mode: stricter filtering
+        if seller_soft_hits >= 1 and not has_buyer_phrase and not has_first_person:
+            logger.debug("REJECTED (Seller-heavy text)")
+            return False
 
     score, _ = calculate_kenyan_intent_score(text)
     min_score = max(INTENT_POINTS_FLOOR, 20 if HIGH_RECALL_MODE else 30)

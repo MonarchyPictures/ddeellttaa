@@ -26,13 +26,21 @@ class SearchRequest(BaseModel):
 
 
 def validate_location(location: str) -> str:
-    """Normalize location."""
+    """
+    STRICT KENYA-ONLY VALIDATION.
+    Rejects any location that is not explicitly Kenya or a Kenyan city/region.
+    """
     if not location:
         return DEFAULT_LOCATION
+    
     loc_lower = location.lower().strip()
+    
+    # Strict check: location MUST contain an allowed Kenya location
     if any(allowed in loc_lower for allowed in ALLOWED_LOCATIONS):
         return location
-    return f"{location}, Kenya"
+    
+    # If location is not Kenya-related, reject it
+    raise ValueError(f"Location '{location}' is not supported. This system only supports Kenya locations: {', '.join(ALLOWED_LOCATIONS[:10])}...")
 
 
 @router.post("/search")
@@ -40,9 +48,21 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
     """
     POST /api/search
     Finds buyers across web + Telegram.
+    KENYA-ONLY: Only Kenyan locations are supported.
     """
     query = request.query.strip()
-    location = validate_location(request.location)
+    
+    # Validate location - Kenya only
+    try:
+        location = validate_location(request.location)
+    except ValueError as e:
+        logger.warning(f"🚫 Kenya-Only Policy: {e}")
+        return {
+            "results": [], "leads": [],
+            "metrics": {"error": str(e), "kenya_only": True},
+            "message": str(e), "count": 0,
+            "status": "kenya_only_policy"
+        }
 
     logger.info(f"🔍 Search: '{query}' in '{location}'")
 
@@ -87,7 +107,17 @@ async def search_get(
             "status": "no_query"
         }
 
-    location = validate_location(location)
+    # Validate location - Kenya only
+    try:
+        location = validate_location(location)
+    except ValueError as e:
+        logger.warning(f"🚫 Kenya-Only Policy: {e}")
+        return {
+            "results": [], "leads": [],
+            "metrics": {"error": str(e), "kenya_only": True},
+            "message": str(e), "count": 0,
+            "status": "kenya_only_policy"
+        }
 
     result = await SEARCH_ENGINE.search_with_telegram(
         query=search_query.strip(),

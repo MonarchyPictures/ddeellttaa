@@ -1,10 +1,12 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Optional
 from datetime import datetime
 import uuid
 
 
 class LeadResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    
     id: uuid.UUID
     title: Optional[str]
     content: Optional[str]
@@ -20,6 +22,3 @@ class LeadResponse(BaseModel):
     intent_type: Optional[str]
     is_verified_signal: Optional[int]
     created_at: datetime
-
-    class Config:
-        from_attributes = True

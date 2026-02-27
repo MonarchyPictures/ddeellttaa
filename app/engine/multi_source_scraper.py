@@ -31,10 +31,10 @@ class MultiSourceScraper:
     """
 
     def __init__(self):
-        self.timeout = int(os.getenv("SEARCH_PLATFORM_TIMEOUT_SEC", "35"))
-        self.global_timeout = int(os.getenv("SEARCH_GLOBAL_TIMEOUT_SEC", "60"))
-        self.max_results_per_query = 15
-        self.max_results_per_source = 30
+        self.timeout = int(os.getenv("SEARCH_PLATFORM_TIMEOUT_SEC", "15"))
+        self.global_timeout = int(os.getenv("SEARCH_GLOBAL_TIMEOUT_SEC", "30"))
+        self.max_results_per_query = 10
+        self.max_results_per_source = 20
 
     async def execute_search_plan(
         self, plan: Dict, max_total_results: int = 100
@@ -237,6 +237,11 @@ class MultiSourceScraper:
                                         continue
                                 elif source == "telegram":
                                     if 't.me' not in url_lower:
+                                        continue
+                                elif source == "jiji_wanted":
+                                    if 'jiji.co.ke' not in url_lower:
+                                        continue
+                                    if not any(marker in url_lower for marker in ['wanted', 'looking-for']):
                                         continue
 
                                 results.append({

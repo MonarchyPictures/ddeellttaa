@@ -3,6 +3,7 @@ from fastapi.responses import PlainTextResponse, FileResponse, JSONResponse
 import io
 import os
 import tempfile
+import logging
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime
@@ -14,10 +15,12 @@ from app.models.lead import Lead
 from app.schemas.lead import LeadResponse
 from app.schemas.agent import AgentCreate, AgentResponse
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
 
 def enrich_agent_data(agent: Agent, db: Session) -> AgentResponse:
-    # Get total leads
+    # Get total leads for this agent
     leads_count = db.query(Lead).filter(Lead.agent_id == agent.id).count()
     
     # Get high intent leads (ranked_score >= 0.7)
@@ -26,13 +29,12 @@ def enrich_agent_data(agent: Agent, db: Session) -> AgentResponse:
         Lead.ranked_score >= 0.7
     ).count()
     
-    # Get last run time (latest lead creation)
-    last_run = db.query(func.max(Lead.created_at)).filter(Lead.agent_id == agent.id).scalar()
+    # Get last run time from agent's last_heartbeat (set when agent runs)
+    last_run = agent.last_heartbeat
     
     # Create response object manually to inject extra fields
-    # Since AgentResponse is a Pydantic model, we can instantiate it with the dict from agent + extra fields
     agent_dict = agent.to_dict()
-    agent_dict['id'] = uuid.UUID(agent_dict['id']) # Convert string back to UUID for Pydantic
+    agent_dict['id'] = uuid.UUID(agent_dict['id'])
     agent_dict['leads_count'] = leads_count
     agent_dict['high_intent_count'] = high_intent_count
     agent_dict['last_run'] = last_run
@@ -47,23 +49,124 @@ def list_agents(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=AgentResponse)
 def create_agent(agent_in: AgentCreate, db: Session = Depends(get_db)):
-    """Create a new agent."""
-    agent = Agent(
-        name=agent_in.name,
-        query=agent_in.query,
-        location=agent_in.location,
-        interval_hours=agent_in.interval_hours,
-        duration_days=agent_in.duration_days,
-    )
+    """Create a new agent and run it immediately."""
+    logger.info(f"[AGENT CREATE] Received request: {agent_in.model_dump()}")
+    
+    try:
+        agent = Agent(
+            name=agent_in.name,
+            query=agent_in.query,
+            location=agent_in.location,
+            interval_hours=agent_in.interval_hours,
+            duration_days=agent_in.duration_days,
+        )
 
-    # Initialize schedule
-    agent.initialize_schedule()
+        # Initialize schedule
+        agent.initialize_schedule()
 
-    db.add(agent)
-    db.commit()
-    db.refresh(agent)
+        db.add(agent)
+        db.commit()
+        db.refresh(agent)
+        
+        logger.info(f"[AGENT CREATE] Success: Agent {agent.id} created")
+        
+        # RUN AGENT IMMEDIATELY after creation (synchronous, no Celery needed)
+        logger.info(f"[AGENT CREATE] Running agent {agent.id} immediately (SYNC)...")
+        try:
+            from app.core.celery_worker import run_agent_task
+            # sync=True means wait for all scrapes to complete
+            result = run_agent_task(str(agent.id), sync=True)
+            logger.info(f"[AGENT CREATE] Agent run result: {result}")
+            
+        except Exception as run_e:
+            logger.error(f"[AGENT CREATE] Agent run failed: {run_e}")
+            # Don't fail the creation if run fails
+        
+        return enrich_agent_data(agent, db)
+        
+    except Exception as e:
+        logger.error(f"[AGENT CREATE] Error: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to create agent: {str(e)}")
 
-    return enrich_agent_data(agent, db)
+
+@router.post("/{agent_id}/run")
+def run_agent_now(agent_id: str, db: Session = Depends(get_db)):
+    """
+    Trigger an agent to run immediately.
+    Works even if Celery is down (uses fallback execution).
+    """
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        return JSONResponse(status_code=200, content={"status": "error", "message": "Invalid agent ID format"})
+    
+    agent = db.query(Agent).filter(Agent.id == agent_uuid).first()
+    if not agent:
+        return JSONResponse(status_code=200, content={"status": "error", "message": "Agent not found"})
+    
+    try:
+        from app.core.celery_app import send_task
+        result = send_task("run_agent_task", str(agent.id))
+        
+        if result.get("status") == "queued":
+            return {
+                "status": "success", 
+                "message": f"Agent '{agent.name}' queued for execution",
+                "task_id": result.get("task_id"),
+                "mode": "celery"
+            }
+        elif result.get("status") == "completed_direct":
+            return {
+                "status": "success",
+                "message": f"Agent '{agent.name}' executed directly (Celery unavailable)",
+                "mode": "direct"
+            }
+        else:
+            return {
+                "status": "error",
+                "message": f"Failed to run agent: {result.get('error', 'Unknown error')}"
+            }
+    except Exception as e:
+        logger.error(f"Error triggering agent {agent_id}: {e}")
+        return JSONResponse(status_code=200, content={"status": "error", "message": str(e)})
+
+
+@router.post("/{agent_id}/run-sync")
+def run_agent_sync(agent_id: str, db: Session = Depends(get_db)):
+    """
+    Run agent SYNCHRONOUSLY - bypasses Celery completely.
+    Use this for testing when Celery/Redis is not running.
+    """
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        return JSONResponse(status_code=200, content={"status": "error", "message": "Invalid agent ID format"})
+    
+    agent = db.query(Agent).filter(Agent.id == agent_uuid).first()
+    if not agent:
+        return JSONResponse(status_code=200, content={"status": "error", "message": "Agent not found"})
+    
+    try:
+        logger.info(f"[SYNC RUN] Running agent '{agent.name}' synchronously...")
+        
+        # Import and call the task function directly (no Celery)
+        from app.core.celery_worker import run_agent_task
+        result = run_agent_task(str(agent.id))
+        
+        # Update last_run timestamp
+        agent.last_heartbeat = datetime.utcnow()
+        db.commit()
+        
+        return {
+            "status": "success",
+            "message": f"Agent '{agent.name}' executed synchronously",
+            "result": result,
+            "mode": "sync"
+        }
+    except Exception as e:
+        logger.error(f"[SYNC RUN] Error running agent {agent_id}: {e}")
+        return JSONResponse(status_code=200, content={"status": "error", "message": str(e)})
 
 @router.get("/{agent_id}", response_model=AgentResponse)
 def get_agent(agent_id: str, db: Session = Depends(get_db)):

@@ -52,10 +52,10 @@ CATEGORY_PATTERNS = {
             "anyone selling {q} {loc}", "cash buyer for {q}",
             "budget for {q}", "second hand {q} {loc}",
             "{q} wanted {loc}", "used {q} {loc} budget",
-            "car for sale {loc} under {price}", "cheap cars {loc}",
-            "importing car from japan to {loc}", "mechanic for {q} {loc}",
-            "spare parts for {q} {loc}", "{q} for sale by owner",
-            "best car dealers in {loc}", "swap {q} with"
+            "i need {q} in {loc}", "looking to buy {q} in {loc}",
+            "where can i buy {q} in {loc}", "ready to buy {q} {loc}",
+            "buying used {q} from owner {loc}", "need {q} seller in {loc}",
+            "budget {price} for {q} in {loc}", "want {q} with logbook {loc}"
         ],
         "platforms": ["facebook_groups", "twitter", "kenyan_forums", "jiji_wanted"],
         "negative_terms": ["-dealer", "-showroom", "-import"]
@@ -223,8 +223,23 @@ class QueryIntelligenceEngine:
         config = self.categories.get(category, self.categories["general"])
         phrases = []
 
+        format_vars = {
+            "q": query,
+            "loc": location,
+            # Some category templates include {price}; provide a safe default.
+            "price": "budget",
+        }
+
+        sellerish_markers = [
+            "for sale", "dealer", "dealers", "showroom", "shop", "store",
+            "importing", "wholesale", "supplier", "stock available", "catalog",
+        ]
+
         for template in config["buyer_phrases"]:
-            phrase = template.format(q=query, loc=location)
+            lower_template = template.lower()
+            if any(marker in lower_template for marker in sellerish_markers):
+                continue
+            phrase = template.format(**format_vars)
             phrases.append(phrase)
 
         return phrases
@@ -260,7 +275,12 @@ class QueryIntelligenceEngine:
         }
 
         # Generate platform-specific queries
-        target_platforms = config.get("platforms", ["duckduckgo", "google"])
+        target_platforms = list(config.get("platforms", ["duckduckgo", "google"]))
+        # Always include broad web fallback platforms so category-specific scraper
+        # failures do not result in 0 scanned signals.
+        for fallback_platform in ("google", "duckduckgo"):
+            if fallback_platform not in target_platforms:
+                target_platforms.append(fallback_platform)
 
         for platform in target_platforms:
             templates = self.platform_templates.get(platform, [])

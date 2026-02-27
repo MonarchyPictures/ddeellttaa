@@ -8,7 +8,9 @@ import uvicorn
 import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import FileResponse
 import time
 
 # Logging Setup
@@ -49,6 +51,15 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Delta 9 API")
 
+# Mount static files (frontend build)
+frontend_dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+frontend_enabled = os.path.exists(frontend_dist_path)
+
+if frontend_enabled:
+    # Mount all static files from dist
+    app.mount("/assets", StaticFiles(directory=os.path.join(frontend_dist_path, "assets")), name="assets")
+    logger.info(f"Frontend static files mounted from: {frontend_dist_path}")
+
 # Elite Engineering: Middleware
 app.add_middleware(KenyaLockingMiddleware)
 
@@ -63,22 +74,14 @@ async def add_process_time_header(request: Request, call_next):
     logger.info(f"{request.method} {request.url.path} - {response.status_code} - {process_time:.4f}s")
     return response
 
-# CORS
-origins = [
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-    "*"
-]
-
+# CORS - Allow all origins for API access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,  # Must be False when using wildcard
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Include API Router (v1)
@@ -114,7 +117,24 @@ app.include_router(
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to Delta 9 API", "status": "running"}
+    """Serve the frontend UI."""
+    frontend_index = os.path.join(frontend_dist_path, "index.html")
+    if os.path.exists(frontend_index):
+        return FileResponse(frontend_index)
+    return {"message": "Welcome to Delta 9 API", "status": "running", "frontend": "not built"}
+
+@app.get("/api/ping")
+def ping():
+    """Simple ping endpoint for connectivity testing."""
+    return {"status": "ok", "message": "pong"}
+
+@app.get("/api-test")
+def api_test_page():
+    """Serve API test page for debugging."""
+    test_page = os.path.join(frontend_dist_path, "api-test.html")
+    if os.path.exists(test_page):
+        return FileResponse(test_page)
+    return {"error": "api-test.html not found. Build frontend first."}
 
 @app.get("/health")
 def health_check():
@@ -159,6 +179,21 @@ def health_check():
             "active_scrapers": scraper_count
         }
     }
+
+
+# SPA Catch-all: Serve index.html for any unmatched routes (client-side routing)
+@app.get("/{full_path:path}")
+def serve_spa(full_path: str):
+    """Serve frontend SPA for all unmatched routes."""
+    # Don't interfere with API routes
+    if full_path.startswith("api/") or full_path.startswith("assets/"):
+        return {"detail": "Not Found"}
+    
+    frontend_index = os.path.join(frontend_dist_path, "index.html")
+    if frontend_enabled and os.path.exists(frontend_index):
+        return FileResponse(frontend_index)
+    
+    return {"detail": "Not Found"}
 
 
 if __name__ == "__main__":

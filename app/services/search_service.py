@@ -1,4 +1,4 @@
-﻿# app/services/search_service.py
+# app/services/search_service.py
 # ============================================================
 # SEARCH SERVICE â€” Runs scrapers in priority order
 # ============================================================
@@ -272,7 +272,7 @@ async def search(query: str, location: str):
         }
 
     # â”€â”€ CACHE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    cache_key = f"search:v3:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
+    cache_key = f"search:v6:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
     cached = cache.get(cache_key)
     if cached:
         logger.info(f"✅ Cache hit for '{query}'")
@@ -296,6 +296,11 @@ async def search(query: str, location: str):
             },
             "count": len(leads),
             "total_signals_captured": engine_resp.get("total_signals_captured", 0),
+            "total_signals_scanned": engine_resp.get(
+                "total_signals_scanned",
+                (engine_resp.get("metrics") or {}).get("total_signals_scanned", 0),
+            ),
+            "buyers_found": len(leads),
             "status": engine_resp.get("status", "success" if leads else "no_results"),
             "message": engine_resp.get(
                 "message",
@@ -445,14 +450,19 @@ async def search(query: str, location: str):
         except Exception as e:
             logger.debug(f"Engine fallback unavailable: {e}")
 
-    # â”€â”€ OPTIONAL: Background DB save â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ OPTIONAL: Background DB save with fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if ENABLE_CELERY and raw_results:
         try:
-            from app.core.celery_worker import ingest_leads_task
-            ingest_leads_task.delay(raw_results)
-            logger.info("ðŸ“¨ Sent to Celery for background DB save")
+            from app.core.celery_app import send_task
+            result = send_task("ingest_leads_task", raw_results)
+            if result.get("status") == "queued":
+                logger.info(f"ðŸ“¨ Sent to Celery for background DB save (Task ID: {result.get('task_id')})")
+            elif result.get("status") == "completed_direct":
+                logger.info("âœ… Ingestion completed directly (Celery unavailable)")
+            else:
+                logger.warning(f"Ingestion status: {result.get('status')}")
         except Exception as e:
-            logger.debug(f"Celery not available: {e}")
+            logger.debug(f"Background save unavailable: {e}")
 
     # â”€â”€ RESPONSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     response = {
@@ -461,6 +471,8 @@ async def search(query: str, location: str):
         "metrics": metrics,
         "count": len(processed_leads),
         "total_signals_captured": metrics["total_found"],
+        "total_signals_scanned": metrics["total_found"],
+        "buyers_found": len(processed_leads),
         "status": "success" if processed_leads else "no_results",
         "message": (
             f"Found {len(processed_leads)} leads from {len(metrics['scrapers_run'])} scrapers "

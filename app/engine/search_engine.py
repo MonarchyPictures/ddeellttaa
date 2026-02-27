@@ -15,7 +15,8 @@ from app.engine.buyer_classifier import BUYER_CLASSIFIER
 from app.services.cache_service import cache
 from app.services.market_classifier import is_valid_buyer
 from app.config.runtime import (
-    CONFIDENCE_FLOOR, SCRAPER_PRIORITIES, SOURCE_RELIABILITY
+    CONFIDENCE_FLOOR, SCRAPER_PRIORITIES, SOURCE_RELIABILITY,
+    KENYA_ONLY, ALLOWED_LOCATIONS
 )
 
 logger = logging.getLogger(__name__)
@@ -34,6 +35,15 @@ class SearchEngine:
         self.scraper = MULTI_SCRAPER
         self.classifier = BUYER_CLASSIFIER
 
+    def _validate_kenya_location(self, location: str) -> bool:
+        """Validate that location is in Kenya."""
+        if not KENYA_ONLY:
+            return True
+        if not location:
+            return True  # Default will be Kenya
+        loc_lower = location.lower().strip()
+        return any(allowed in loc_lower for allowed in ALLOWED_LOCATIONS)
+
     async def search(
         self,
         query: str,
@@ -43,10 +53,25 @@ class SearchEngine:
         allow_legacy_fallback: bool = True
     ) -> Dict[str, Any]:
 
+        # KENYA-ONLY VALIDATION
+        if not self._validate_kenya_location(location):
+            logger.warning(f"🚫 KENYA-ONLY POLICY: Rejected location '{location}'")
+            return {
+                "results": [],
+                "leads": [],
+                "metrics": {"error": f"Location '{location}' not supported. Kenya only.", "kenya_only": True},
+                "count": 0,
+                "total_signals_captured": 0,
+                "total_signals_scanned": 0,
+                "buyers_found": 0,
+                "status": "kenya_only_policy",
+                "message": f"Location '{location}' is not supported. This system only supports Kenya locations."
+            }
+
         logger.info(f"🔍 ENGINE: '{query}' in '{location}'")
 
         # Cache
-        cache_key = f"engine:v3:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
+        cache_key = f"engine:v6:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
         cached = cache.get(cache_key)
         if cached:
             logger.info("✅ Cache hit")
@@ -71,9 +96,16 @@ class SearchEngine:
                 ordered_platforms[p] = plan["platforms"][p]
         plan["platforms"] = ordered_platforms
 
-        # Execute search
-        raw_results = await self.scraper.execute_search_plan(plan)
-        logger.info(f"📊 Raw results: {len(raw_results)}")
+        # Execute search with timeout protection
+        try:
+            raw_results = await asyncio.wait_for(
+                self.scraper.execute_search_plan(plan),
+                timeout=25  # Hard limit for search execution
+            )
+            logger.info(f"📊 Raw results: {len(raw_results)}")
+        except asyncio.TimeoutError:
+            logger.warning("⏰ Search timeout - returning partial results")
+            raw_results = []
 
         # Classify
         leads = []
@@ -146,6 +178,12 @@ class SearchEngine:
                     leads = legacy_leads
             except Exception as e:
                 logger.warning(f"Legacy fallback failed: {e}")
+        # Buyer-intent web probe fallback: avoids no-result dead end when heavy sources timeout.
+        if not leads:
+            probe_leads = self._high_intent_ddg_fallback(query, location)
+            if probe_leads:
+                logger.info(f"High-intent DDG probe recovered {len(probe_leads)} leads")
+                leads = probe_leads
 
         # Metrics
         metrics = {
@@ -154,6 +192,7 @@ class SearchEngine:
             "platform_order": sorted_platforms,
             "total_queries": plan["total_queries"],
             "raw_results": len(raw_results),
+            "total_signals_scanned": len(raw_results),
             "buyers_found": len(leads),
             "rejected": len(rejected),
             "confidence_floor": CONFIDENCE_FLOOR,
@@ -166,6 +205,8 @@ class SearchEngine:
             "metrics": metrics,
             "count": len(leads),
             "total_signals_captured": len(raw_results),
+            "total_signals_scanned": len(raw_results),
+            "buyers_found": len(leads),
             "category": plan["category"],
             "rejected_sample": rejected[:5],
             "status": "success" if leads else "no_results",
@@ -182,11 +223,77 @@ class SearchEngine:
         logger.info(f"🏁 {len(leads)} leads, {len(rejected)} rejected")
         return response
 
+    def _high_intent_ddg_fallback(self, query: str, location: str) -> List[Dict[str, Any]]:
+        """
+        Last-resort buyer probe using explicit buyer-intent phrasing.
+        Keeps the same precision + buyer gates to avoid seller noise.
+        """
+        if DDGS is None:
+            return []
+
+        probes = [
+            f'"looking for" "{query}" "{location}"',
+            f'"want to buy" "{query}" "{location}"',
+            f'"need to buy" "{query}" "{location}"',
+            f'"wtb" "{query}" "{location}"',
+            f'"natafuta" "{query}" "{location}"',
+            f'"nahitaji" "{query}" "{location}"',
+        ]
+        leads: List[Dict[str, Any]] = []
+        seen_urls = set()
+
+        try:
+            with DDGS() as ddgs:
+                for q in probes:
+                    rows = list(ddgs.text(q, region="ke-en", timelimit="m", max_results=12))
+                    for row in rows:
+                        url = row.get("href", "")
+                        if not url or url in seen_urls:
+                            continue
+                        seen_urls.add(url)
+                        text = f"{row.get('title', '')} {row.get('body', '')}".strip()
+                        raw = {
+                            "url": url,
+                            "source": "ddg_buyer_probe",
+                            "title": row.get("title", ""),
+                            "text": text,
+                            "location": location,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                        signal = self.classifier.classify(text, "ddg_buyer_probe")
+                        if not signal.is_buyer:
+                            continue
+                        if signal.confidence < CONFIDENCE_FLOOR:
+                            continue
+                        if not self._passes_precision_filter(raw, signal, query):
+                            continue
+                        if not is_valid_buyer(text, url):
+                            continue
+                        leads.append(self._build_lead(raw, signal, query))
+                        if len(leads) >= 20:
+                            return leads
+        except Exception as e:
+            logger.debug(f"High-intent DDG probe failed: {e}")
+
+        return leads
+
     async def search_with_telegram(self, query, location="Kenya",
                                      include_telegram=True,
                                      telegram_hours_back=24, **kwargs):
         """Enhanced search with Telegram results merged in."""
         import asyncio
+
+        # KENYA-ONLY VALIDATION
+        if not self._validate_kenya_location(location):
+            logger.warning(f"🚫 KENYA-ONLY POLICY: Rejected location '{location}'")
+            return {
+                "results": [],
+                "leads": [],
+                "metrics": {"error": f"Location '{location}' not supported. Kenya only.", "kenya_only": True},
+                "count": 0,
+                "status": "kenya_only_policy",
+                "message": f"Location '{location}' is not supported. This system only supports Kenya locations."
+            }
 
         tasks = [self.search(query, location, **kwargs)]
 
@@ -308,23 +415,47 @@ class SearchEngine:
 
     def _passes_precision_filter(self, raw: Dict[str, Any], signal, query: str) -> bool:
         """
-        Reduce listing/directory noise while preserving high recall across arbitrary products.
+        Strict buyer precision gate:
+        - Must match searched product terms
+        - Must show explicit buyer intent (not informational/seller copy)
+        - Must reject generic directory/info pages
         """
         title = (raw.get("title") or "").lower()
         text = (raw.get("text") or "").lower()
         url = (raw.get("url") or "").lower()
         haystack = f"{title} {text} {url}"
 
-        buyer_cues = [
-            "looking for", "want to buy", "need", "wtb", "wanted",
-            "natafuta", "nahitaji", "anyone selling", "where can i buy",
-            "budget", "urgent"
-        ]
-        has_buyer_cue = any(cue in haystack for cue in buyer_cues)
+        # 1) Exact product relevance
+        product_terms = self._extract_product_terms(query)
+        has_product_match = any(term in haystack for term in product_terms)
+        if not has_product_match:
+            return False
 
+        # 2) Explicit buyer intent only (avoid second-person marketing copy)
+        if (
+            "are you looking for" in haystack
+            or "looking for information" in haystack
+            or re.search(r"\b(if\s+)?you(\s+are|\s*'re)?\s+looking\s+for\b", haystack)
+        ):
+            return False
+        buyer_cues = [
+            "looking to buy", "want to buy", "need to buy", "wtb", "wanted",
+            "where can i buy", "ready to buy", "cash buyer",
+            "natafuta", "nahitaji", "nataka kununua", "ninatafuta",
+            "my budget", "budget is"
+        ]
+        has_explicit_buyer_cue = any(cue in haystack for cue in buyer_cues)
+        has_first_person = bool(
+            re.search(r"\b(i|i'm|im|my|me|we|our|natafuta|nahitaji|nataka|ninatafuta)\b", haystack)
+        )
+        has_buyer_cue = has_explicit_buyer_cue or (has_first_person and "looking for" in haystack)
+        if not has_buyer_cue:
+            return False
+
+        # 3) Remove seller/listing/directory noise
         listing_noise_terms = [
             "classifieds", "marketplace", "shop", "category", "product",
-            "for sale", "for rent", "listing"
+            "for sale", "for rent", "listing", "order now", "add to cart", "checkout"
         ]
         listing_noise_paths = ["/tag/", "/category/", "/product/", "/shop/", "/search?"]
         is_listing_noise = (
@@ -332,19 +463,78 @@ class SearchEngine:
             any(path in url for path in listing_noise_paths)
         )
 
-        query_tokens = [
-            t for t in re.findall(r"[a-z0-9]+", query.lower())
-            if len(t) >= 3 and t not in {"the", "for", "and", "with", "from", "kenya"}
+        # 4) Drop informational/travel/general pages that are not buyer requests
+        info_noise_terms = [
+            "things to do", "tripadvisor", "attractions", "travel guide", "hotel",
+            "price guide", "best electronics shops", "forum rules", "wikipedia"
         ]
-        token_overlap = sum(1 for t in query_tokens if t in haystack)
-        has_query_overlap = token_overlap >= max(1, min(2, len(query_tokens)))
+        if any(term in haystack for term in info_noise_terms):
+            return False
+
+        # 5) Hard reject seller-promotional and hiring content
+        seller_promo_terms = [
+            "looking for your perfect", "book an inspection", "check out this",
+            "visit our showroom", "call us", "dm for price", "official dealer",
+            "stock available", "we supply", "we sell", "available now"
+        ]
+        hiring_terms = [
+            "job", "hiring", "vacancy", "apply now", "career", "recruit",
+            "parts advisor", "store clerk"
+        ]
+        if any(term in haystack for term in seller_promo_terms):
+            return False
+        if any(term in haystack for term in hiring_terms):
+            return False
+        if "/reel/" in url or "/jobs/" in url or "job-" in url:
+            return False
+
+        # 6) Enforce geo relevance using content only (not raw.location, which may be defaulted).
+        requested_loc = (raw.get("location") or "").lower()
+        geo_context = f"{title} {text} {url}"
+        foreign_markers = [
+            "tanzania", "uganda", "nigeria", "ghana", "zambia", "india", "pakistan",
+            "usa", "united states", "uk", "united kingdom", ".co.tz", ".co.ug", ".co.in",
+        ]
+        kenya_markers = [
+            "kenya", "nairobi", "mombasa", "kisumu", "nakuru", "eldoret",
+            ".co.ke", "countryke", "ksh", "kes", "+254"
+        ]
+        if any(marker in geo_context for marker in foreign_markers) and not any(
+            marker in geo_context for marker in kenya_markers
+        ):
+            return False
+        # Kenya query safety: require at least one Kenya-local signal to avoid irrelevant global chatter.
+        if ("kenya" in requested_loc or requested_loc == "") and not any(
+            marker in geo_context for marker in kenya_markers
+        ):
+            # Allow posts with Kenyan phone style even if marker words are absent.
+            if not re.search(r"(\+254|(?:\b0[17]\d{8}\b))", geo_context):
+                return False
 
         has_contact = bool(getattr(signal, "phone", "") or getattr(signal, "email", ""))
-        if is_listing_noise and not has_buyer_cue and not has_contact and signal.intent_score < 0.65:
+        if is_listing_noise and not has_contact:
             return False
-        if not has_query_overlap and signal.intent_score < 0.75:
+        if signal.intent_score < 0.2:
             return False
         return True
+
+    def _extract_product_terms(self, query: str) -> List[str]:
+        """Extract product-focused unigram/bigram terms from the search query."""
+        q = query.lower()
+        tokens = re.findall(r"[a-z0-9]+", q)
+        stop = {
+            "looking", "for", "to", "buy", "want", "need", "wanted", "wtb",
+            "ready", "cash", "budget", "urgent", "urgently", "where", "can",
+            "i", "we", "my", "our", "anyone", "selling", "who", "has",
+            "in", "at", "near", "the", "a", "an", "and", "or", "with", "from",
+            "kenya", "nairobi", "mombasa", "kisumu", "nakuru", "eldoret",
+            "ref", "gate", "pass2", "gate2", "gate3"
+        }
+        core = [t for t in tokens if len(t) >= 3 and t not in stop]
+        terms = list(core)
+        for i in range(len(core) - 1):
+            terms.append(f"{core[i]} {core[i+1]}")
+        return list(dict.fromkeys(terms))
 
     def _build_lead(self, raw, signal, query):
         """Build frontend-ready lead dict."""
