@@ -66,12 +66,16 @@ app.add_middleware(KenyaLockingMiddleware)
 @app.middleware("http")
 async def add_process_time_header(request: Request, call_next):
     start_time = time.time()
+    
+    # DEBUG: Log every request
+    logger.info(f"[REQUEST] {request.method} {request.url.path}")
+    
     response = await call_next(request)
     process_time = time.time() - start_time
     response.headers["X-Process-Time"] = str(process_time)
     
     # Simple Logging for Observability
-    logger.info(f"{request.method} {request.url.path} - {response.status_code} - {process_time:.4f}s")
+    logger.info(f"[RESPONSE] {request.method} {request.url.path} - {response.status_code} - {process_time:.4f}s")
     return response
 
 # CORS - Allow all origins for API access
