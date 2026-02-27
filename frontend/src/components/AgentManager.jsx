@@ -119,6 +119,10 @@ const AgentManager = () => {
   };
 
   const handleRunSync = async (id, name) => {
+    // DEBUG: Log exactly what we're working with
+    console.log("[DEBUG] handleRunSync called with id:", id, "type:", typeof id);
+    console.log("[DEBUG] window.location:", window.location.href);
+    
     if (!window.confirm(`Run agent "${name}" now? This will execute immediately without Celery.`)) {
       return;
     }
