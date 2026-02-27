@@ -181,6 +181,20 @@ def health_check():
     }
 
 
+# Startup event: Print all registered routes
+@app.on_event("startup")
+async def print_routes():
+    """Print all registered routes at startup for debugging."""
+    logger.info("=" * 60)
+    logger.info("REGISTERED FASTAPI ROUTES:")
+    logger.info("=" * 60)
+    for route in app.routes:
+        if hasattr(route, "methods") and hasattr(route, "path"):
+            methods = ",".join(route.methods)
+            logger.info(f"  {methods} {route.path}")
+    logger.info("=" * 60)
+
+
 # SPA Catch-all: Serve index.html for any unmatched routes (client-side routing)
 @app.get("/{full_path:path}")
 def serve_spa(full_path: str):
