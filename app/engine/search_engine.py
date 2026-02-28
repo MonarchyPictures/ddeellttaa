@@ -70,6 +70,7 @@ class SearchEngine:
             }
 
         logger.info(f"🔍 ENGINE: '{query}' in '{location}'")
+        print(f"ENGINE_SEARCH_START: {query}")
 
         # Cache
         cache_key = f"engine:v6:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
@@ -114,6 +115,21 @@ class SearchEngine:
         seen_hashes = set()
         
         logger.info(f"🔍 Classifying {len(raw_results)} raw results")
+        print(f"ENGINE_RAW_RESULTS: {len(raw_results)}")
+        
+        if not raw_results:
+            print("ENGINE_NO_RAW_RESULTS - returning empty")
+            return {
+                "results": [],
+                "leads": [],
+                "metrics": {"error": "No raw results from scrapers"},
+                "count": 0,
+                "total_signals_captured": 0,
+                "total_signals_scanned": 0,
+                "buyers_found": 0,
+                "status": "no_results",
+                "message": "No results found. Try different keywords."
+            }
 
         for raw in raw_results:
             text = raw.get("text", "")
@@ -169,6 +185,12 @@ class SearchEngine:
                 })
         
         logger.info(f"✅ {len(leads)} leads passed, {len(rejected)} rejected")
+        print(f"ENGINE_LEADS_PASSED: {len(leads)}")
+        print(f"ENGINE_REJECTED: {len(rejected)}")
+        
+        # Show first 3 rejection reasons
+        for r in rejected[:3]:
+            print(f"  REJECTED: {r.get('reason')} - {r.get('url', '')[:50]}...")
 
         # Sort: Source reliability + intent score
         leads.sort(key=lambda x: (
@@ -192,6 +214,7 @@ class SearchEngine:
         
         # RAW RESULTS FALLBACK: if we have raw results but no leads, return them as unclassified
         if not leads and raw_results:
+            print(f"ENGINE_RAW_FALLBACK: Using {len(raw_results)} raw results")
             logger.warning(f"Returning {len(raw_results)} raw results as unclassified leads")
             for raw in raw_results[:10]:  # Limit to top 10
                 leads.append({
@@ -283,6 +306,8 @@ class SearchEngine:
             cache.set(cache_key, response, ttl_seconds=1200)
 
         logger.info(f"🏁 {len(leads)} leads, {len(rejected)} rejected")
+        print(f"ENGINE_RETURNING: {len(leads)} leads")
+        print(f"ENGINE_STATUS: {response['status']}")
         return response
 
     def _high_intent_ddg_fallback(self, query: str, location: str) -> List[Dict[str, Any]]:
