@@ -42,5 +42,8 @@ def calculate_confidence(
 
     # Apply floor — never return below CONFIDENCE_FLOOR for any content
     score = max(score, CONFIDENCE_FLOOR)
-
-    return min(score, 0.99)
+    
+    final_score = min(score, 0.99)
+    print(f"[CONFIDENCE_ENGINE] Intent: {intent_score:.2f} | Urgency: {urgency_score:.2f} | Source: {source_rel:.2f} | Final: {final_score:.2f}")
+    
+    return final_score

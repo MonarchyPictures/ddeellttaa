@@ -50,6 +50,14 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
     Finds buyers across web + Telegram.
     KENYA-ONLY: Only Kenyan locations are supported.
     """
+    import os
+    import traceback
+    
+    # BACKEND ROUTE TRACE
+    print("="*60)
+    print("[BACKEND ROUTE] /api/search HIT")
+    print("[BACKEND ROUTE] Request:", request.model_dump())
+    
     query = request.query.strip()
     
     # Validate location - Kenya only
@@ -65,22 +73,46 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
         }
 
     logger.info(f"🔍 Search: '{query}' in '{location}'")
+    print(f"[BACKEND ROUTE] Query: '{query}' | Location: '{location}'")
+    
+    # ENV CHECK
+    print("[BACKEND ROUTE] ENV CHECK:")
+    print(f"  SERPAPI_API_KEY: {bool(os.getenv('SERPAPI_API_KEY'))}")
+    print(f"  GOOGLE_CSE_API_KEY: {bool(os.getenv('GOOGLE_CSE_API_KEY'))}")
+    print(f"  REDIS_URL: {bool(os.getenv('REDIS_URL'))}")
+    print(f"  HIGH_RECALL_MODE: {os.getenv('HIGH_RECALL_MODE', 'NOT SET')}")
 
-    # Use enhanced search with Telegram
-    result = await SEARCH_ENGINE.search_with_telegram(
-        query=query,
-        location=location,
-        include_telegram=request.include_telegram,
-        telegram_hours_back=request.telegram_hours_back,
-        include_all=request.include_all,
-        min_score=request.min_score
-    )
+    try:
+        # Use enhanced search with Telegram
+        print("[BACKEND ROUTE] Calling SEARCH_ENGINE.search_with_telegram...")
+        result = await SEARCH_ENGINE.search_with_telegram(
+            query=query,
+            location=location,
+            include_telegram=request.include_telegram,
+            telegram_hours_back=request.telegram_hours_back,
+            include_all=request.include_all,
+            min_score=request.min_score
+        )
+        
+        print(f"[BACKEND ROUTE] Result received: {len(result.get('leads', []))} leads")
+        print(f"[BACKEND ROUTE] Result status: {result.get('status')}")
+        print("="*60)
 
-    # Background Save
-    if result.get("leads"):
-        background_tasks.add_task(save_leads_to_db, result["leads"], query)
+        # Background Save
+        if result.get("leads"):
+            background_tasks.add_task(save_leads_to_db, result["leads"], query)
 
-    return result
+        return result
+    except Exception as e:
+        print(f"[BACKEND ROUTE] ❌ ERROR: {e}")
+        print(f"[BACKEND ROUTE] TRACEBACK: {traceback.format_exc()}")
+        return {
+            "results": [], "leads": [],
+            "metrics": {"error": str(e)},
+            "message": f"Search failed: {str(e)}",
+            "count": 0,
+            "status": "error"
+        }
 
 
 @router.get("/search")

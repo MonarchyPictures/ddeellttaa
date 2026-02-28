@@ -74,21 +74,36 @@ const Dashboard = () => {
     setMetrics(null);
 
     try {
+      // FRONTEND PIPELINE TRACE
+      console.log('[FRONTEND] =============================');
+      console.log('[FRONTEND] Search triggered:', searchQuery.trim());
+      console.log('[FRONTEND] Request URL:', `${API_URL}/search`);
+      
+      const requestPayload = {
+        query: searchQuery.trim(),
+        location: 'Kenya'
+      };
+      console.log('[FRONTEND] Request payload:', requestPayload);
+
       const response = await fetchWithRetry(`${API_URL}/search`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({
-          query: searchQuery.trim(),
-          location: 'Kenya'
-        }),
+        body: JSON.stringify(requestPayload),
         cache: 'no-store'
       });
+
+      console.log('[FRONTEND] Response status:', response.status);
 
       if (!response.ok) {
         throw new Error(`Search failed: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('[FRONTEND] Full response:', data);
+      console.log('[FRONTEND] Results count:', data.count || (data.results || data.leads || []).length);
+      console.log('[FRONTEND] Response status:', data.status);
+      console.log('[FRONTEND] =============================');
+      
       const results = data.results || data.leads || [];
       
       // Sort by ranked_score

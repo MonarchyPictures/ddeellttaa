@@ -45,9 +45,11 @@ def calculate_intent_score(text: str) -> float:
             score -= INTENT_WEIGHT_NEGATIVE
 
     # High intent signals
+    high_hits = []
     for term in HIGH_INTENT_TERMS:
         if term in text_lower:
             score += INTENT_WEIGHT_HIGH
+            high_hits.append(term)
 
     # Medium intent signals
     for term in MEDIUM_INTENT_TERMS:
@@ -67,4 +69,6 @@ def calculate_intent_score(text: str) -> float:
     if re.search(r'\b\d+\s*(k|m|ksh|kes)\b', text_lower):
         score += INTENT_WEIGHT_BUDGET
 
-    return max(0.0, min(score, 1.0))
+    final_score = max(0.0, min(score, 1.0))
+    print(f"[INTENT_ENGINE] Text: '{text[:50]}...' | Score: {final_score:.2f} | High hits: {high_hits}")
+    return final_score
