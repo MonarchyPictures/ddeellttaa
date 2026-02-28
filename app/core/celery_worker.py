@@ -1,38 +1,40 @@
 """
-Celery Worker Tasks with Fallback Support
+Celery Worker Tasks - Production Only
 
-This module defines all Celery tasks. It imports from celery_app to ensure
-consistent configuration and fallback support.
+Pure Celery tasks. No SQLite fallback. No sync execution.
+Redis is REQUIRED.
 """
 import os
 import sys
 import logging
 import hashlib
+import uuid
+import asyncio
 from datetime import datetime, timedelta, timezone
 
-# Add project root to sys.path for absolute imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from app.db.database import SessionLocal
 from app.db import models
+from app.core.celery_app import celery
+from app.services.agent_scheduler import (
+    get_agents_due_for_execution,
+    mark_agent_running,
+    complete_agent_execution,
+    deactivate_expired_agents,
+    should_execute_agent
+)
+from app.services.parallel_scraper_runner import run_scrapers_parallel
+from app.scrapers.registry import SCRAPER_REGISTRY
+from app.core.cache import get_cached, set_cached
 
-# Import the new celery_app with fallback support
-from app.core.celery_app import celery_app, fallback_manager
-
-# Configure Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# TASK DEFINITIONS
-# =============================================================================
 
-@celery_app.task(name="ingest_leads_task")
+@celery.task(name="ingest_leads_task")
 def ingest_leads_task(raw_results: list):
-    """
-    Async Task: Process raw scraper results -> Validation -> DB.
-    Implements the Queue -> Database layer.
-    """
+    """Process raw scraper results -> Validation -> DB."""
     from app.services.ingestion_service import ingest_leads
     
     logger.info(f"Queue: Received {len(raw_results)} items for ingestion")
@@ -43,16 +45,10 @@ def ingest_leads_task(raw_results: list):
         logger.error(f"Ingestion Task Failed: {e}")
         return []
 
-# Register with fallback manager
-fallback_manager.register_task("ingest_leads_task", ingest_leads_task)
 
-
-@celery_app.task(name="specialops_mission_task")
+@celery.task(name="specialops_mission_task")
 def specialops_mission_task(query: str, location: str = "Kenya", agent_id: str = None):
-    """
-    MASTER AGENT MISSION: Autonomous web intelligence routing.
-    Follows the SpecialOps decision logic for search, crawl, and extraction.
-    """
+    """MASTER AGENT MISSION: Autonomous web intelligence routing."""
     from app.core.specialops import SpecialOpsAgent
     from app.utils.normalization import LeadValidator
     from app.nlp.duplicate_detector import DuplicateDetector
@@ -159,18 +155,10 @@ def specialops_mission_task(query: str, location: str = "Kenya", agent_id: str =
     finally:
         db.close()
 
-fallback_manager.register_task("specialops_mission_task", specialops_mission_task)
 
-
-@celery_app.task(bind=True, max_retries=5, name="scrape_source_task")
+@celery.task(bind=True, max_retries=5, name="scrape_source_task")
 def scrape_source_task(self, source_name: str, query: str, location: str = "Kenya"):
-    """
-    Real Engineering Self-Healing Scraper Task:
-    1. Retries with exponential backoff.
-    2. Tracks failure counts per source (Redis).
-    3. Auto-disables source after X failures (Circuit Breaker).
-    4. Reactivates after cooldown.
-    """
+    """Self-Healing Scraper Task with Circuit Breaker."""
     import asyncio
     from app.scrapers.registry import SCRAPER_REGISTRY
     import redis
@@ -178,20 +166,17 @@ def scrape_source_task(self, source_name: str, query: str, location: str = "Keny
     FAILURE_THRESHOLD = 3
     COOLDOWN_SECONDS = 300
     
-    BROKER_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    REDIS_URL = os.getenv("REDIS_URL")
+    if not REDIS_URL:
+        raise RuntimeError("REDIS_URL not set for circuit breaker")
     
-    try:
-        r = redis.from_url(BROKER_URL)
-    except Exception:
-        logger.warning("Redis not available for circuit breaker. Skipping self-healing logic.")
-        r = None
-
+    r = redis.from_url(REDIS_URL)
     failure_key = f"scraper_failures:{source_name}"
     disabled_key = f"scraper_disabled:{source_name}"
     
-    if r and r.exists(disabled_key):
+    if r.exists(disabled_key):
         ttl = r.ttl(disabled_key)
-        logger.warning(f"🚫 Source '{source_name}' is DISABLED. Cooldown active for {ttl}s.")
+        logger.warning(f"Source '{source_name}' is DISABLED. Cooldown active for {ttl}s.")
         return []
 
     scraper = SCRAPER_REGISTRY.get(source_name)
@@ -199,90 +184,82 @@ def scrape_source_task(self, source_name: str, query: str, location: str = "Keny
         logger.error(f"Scraper '{source_name}' not found in registry.")
         return []
 
-    logger.info(f"🕵️ Scraping Source: {source_name} for '{query}'")
+    logger.info(f"Scraping Source: {source_name} for '{query}'")
 
     try:
         results = asyncio.run(scraper.search(query, location))
-        
-        if r:
-            r.delete(failure_key)
-            
+        r.delete(failure_key)
         return results
 
     except Exception as exc:
-        logger.error(f"❌ Scraper '{source_name}' Failed: {exc}")
+        logger.error(f"Scraper '{source_name}' Failed: {exc}")
+        failures = r.incr(failure_key)
         
-        if r:
-            failures = r.incr(failure_key)
-            
-            if failures >= FAILURE_THRESHOLD:
-                r.setex(disabled_key, COOLDOWN_SECONDS, "1")
-                r.delete(failure_key)
-                logger.critical(f"🔥🔥 Source '{source_name}' DISABLED for {COOLDOWN_SECONDS}s due to {failures} failures.")
-                return []
+        if failures >= FAILURE_THRESHOLD:
+            r.setex(disabled_key, COOLDOWN_SECONDS, "1")
+            r.delete(failure_key)
+            logger.critical(f"Source '{source_name}' DISABLED for {COOLDOWN_SECONDS}s due to {failures} failures.")
+            return []
         
         retry_delay = 60 * (2 ** self.request.retries)
         raise self.retry(exc=exc, countdown=retry_delay)
 
-fallback_manager.register_task("scrape_source_task", scrape_source_task)
 
-
-@celery_app.task(name="run_all_agents")
+@celery.task(name="run_all_agents")
 def run_all_agents():
-    """Trigger active agents that are due for discovery."""
+    """
+    Trigger agents that are due for execution.
+    Database is the SINGLE SOURCE OF TRUTH for scheduling.
+    
+    Beat runs this every minute. DB controls execution timing.
+    """
     db = SessionLocal()
     try:
-        now = datetime.now()
-        active_agents = db.query(models.Agent).filter(
-            models.Agent.active == True,
-            (models.Agent.next_run_at <= now) | (models.Agent.next_run_at == None)
-        ).all()
+        # Step 1: Deactivate expired agents
+        deactivated = deactivate_expired_agents(db)
+        if deactivated > 0:
+            logger.info(f"Deactivated {deactivated} expired agents")
         
+        # Step 2: Query DB for agents due to run (DB = source of truth)
+        due_agents = get_agents_due_for_execution(db)
+        
+        if not due_agents:
+            logger.debug("No agents due for execution")
+            return "No agents due"
+        
+        # Step 3: Trigger each due agent
         triggered_count = 0
-        for agent in active_agents:
-            # Check self-termination condition (end_time reached)
-            if agent.end_time and now >= agent.end_time:
-                logger.info(f"Agent '{agent.name}' (ID: {agent.id}) has reached end_time. Self-terminating.")
-                agent.active = False
-                agent.next_run_at = None
-                db.commit()
+        for agent in due_agents:
+            # Double-check with scheduler logic (race condition protection)
+            if not should_execute_agent(agent):
+                logger.debug(f"Agent {agent.id} skipped by scheduler check")
                 continue
             
-            # Fallback for older agents without end_time
-            elif not agent.end_time and agent.created_at:
-                expiry_time = agent.created_at + timedelta(days=agent.duration_days)
-                if now > expiry_time:
-                    logger.info(f"Agent '{agent.name}' (ID: {agent.id}) has expired (duration). Deactivating.")
-                    agent.active = False
-                    agent.next_run_at = None
-                    db.commit()
-                    continue
+            # Mark as running to prevent duplicate execution
+            if not mark_agent_running(db, agent):
+                logger.warning(f"Could not mark agent {agent.id} as running (race condition)")
+                continue
             
-            # Send task with fallback support
-            from app.core.celery_app import send_task
-            send_task("run_agent_task", str(agent.id))
-            
-            # Update next run timestamp IMMEDIATELY
-            agent.next_run_at = now + timedelta(hours=agent.interval_hours or 2)
-            db.commit()
+            # Queue the task
+            logger.info(f"Triggering agent '{agent.name}' (ID: {agent.id})")
+            run_agent_task.delay(str(agent.id))
             triggered_count += 1
-            
+        
+        logger.info(f"Triggered {triggered_count}/{len(due_agents)} due agents")
         return f"Triggered {triggered_count} agents"
+        
     except Exception as e:
         logger.error(f"Error in run_all_agents: {e}")
         return f"Error: {e}"
     finally:
         db.close()
 
-fallback_manager.register_task("run_all_agents", run_all_agents)
 
-
-@celery_app.task(name="scrape_platform_task")
+@celery.task(name="scrape_platform_task")
 def scrape_platform_task(platform: str, query: str, location: str = "Kenya", 
                          agent_id: str = None, radius: int = 50, 
                          min_intent: float = 0.7, tier: int = 2, timeout: int = 15):
     """Background task to scrape a platform and save leads."""
-    import uuid
     from app.scrapers.registry import SCRAPER_REGISTRY
     from app.utils.normalization import LeadValidator
     from app.intelligence.ranking import RankingEngine
@@ -322,7 +299,6 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
     try:
         agent = None
         if agent_id:
-            # Convert string to UUID if needed
             if isinstance(agent_id, str):
                 agent_id = uuid.UUID(agent_id)
             agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
@@ -421,7 +397,7 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
                 # Create lead record
                 lead = models.Lead(
                     id=normalized["id"],
-                    agent_id=agent.id if agent else None,  # LINK TO AGENT
+                    agent_id=agent.id if agent else None,
                     source_platform=normalized["source_platform"],
                     source_url=normalized["source_url"],
                     location_raw=normalized.get("location_raw"),
@@ -473,12 +449,12 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
                 if not existing and not is_phone_duplicate:
                     if agent:
                         if priority_class == "HIGH":
-                            lead.notes = f"🚨 URGENT MATCH: '{agent.query}' in {agent.location}. Score: {ranked_score:.2f}\n" + (lead.notes or "")
+                            lead.notes = f"URGENT MATCH: '{agent.query}' in {agent.location}. Score: {ranked_score:.2f}\n" + (lead.notes or "")
                             high_value_leads.append(lead)
                             if raw_lead:
                                 raw_lead.notified = 1
                         elif priority_class == "MEDIUM":
-                            lead.notes = f"✨ STANDARD MATCH: '{agent.query}' in {agent.location}. Score: {ranked_score:.2f}\n" + (lead.notes or "")
+                            lead.notes = f"STANDARD MATCH: '{agent.query}' in {agent.location}. Score: {ranked_score:.2f}\n" + (lead.notes or "")
                             high_value_leads.append(lead)
                             if raw_lead:
                                 raw_lead.notified = 1
@@ -519,95 +495,104 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
         
     return f"Processed {processed_count} leads ({alert_count} alerts) from {platform} in {location}"
 
-fallback_manager.register_task("scrape_platform_task", scrape_platform_task)
 
-
-@celery_app.task(name="run_agent_task")
-def run_agent_task(agent_id: str, sync: bool = False):
+@celery.task(name="run_agent_task")
+def run_agent_task(agent_id: str):
     """
-    Run discovery for a single agent following the strict flow:
-    1. Call search pipeline (Tier 2 Deep Scrape)
-    2. Save ALL raw leads
-    3. Score & Rank leads
-    4. Mark high score as notified
-    
-    Args:
-        agent_id: UUID of the agent to run
-        sync: If True, run synchronously and wait for results
+    Run discovery for a single agent with parallel scraping.
+    Uses scheduler for reliable execution tracking.
     """
-    import uuid
     db = SessionLocal()
+    success = False
+    error_msg = None
+    
     try:
-        # Convert string to UUID if needed
         if isinstance(agent_id, str):
             agent_id = uuid.UUID(agent_id)
         agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
+        
         if not agent:
-            logger.error(f"Agent {agent_id} not found in database.")
+            logger.error(f"Agent {agent_id} not found")
             return f"Agent {agent_id} not found"
         
-        logger.info(f"EXECUTING Agent Flow for '{agent.name}' (ID: {agent.id})")
-        logger.info(f"Mode: {'SYNC' if sync else 'ASYNC'}")
+        logger.info(f"EXECUTING Agent '{agent.name}' (ID: {agent.id})")
         
-        # Get platforms dynamically from registry
+        # Check cache first
+        cached_results = get_cached(agent.query, agent.location or "Kenya")
+        if cached_results:
+            logger.info(f"⚡ Cache HIT for agent '{agent.name}' query '{agent.query}'")
+            # Still process cached results through ingestion
+            if cached_results:
+                ingest_leads_task.delay(cached_results)
+            success = True
+            return f"Agent {agent.name}: {len(cached_results)} cached results (skipped scraping)"
+        
+        # Get platforms from registry
         from app.core.agent_scraper_resolver import get_available_scrapers
         requested_platforms = getattr(agent, "platforms", None)
-        platforms = get_available_scrapers(requested_platforms)
+        platform_names = get_available_scrapers(requested_platforms)
         
-        if not platforms:
-            logger.error(f"No available scrapers for agent {agent_id}")
-            return f"Error: No scrapers available"
+        if not platform_names:
+            error_msg = "No scrapers available"
+            logger.error(f"Agent {agent_id}: {error_msg}")
+            return f"Error: {error_msg}"
         
-        logger.info(f"✅ Using platforms: {platforms}")
-        results = []
+        logger.info(f"Agent {agent_id}: Using platforms {platform_names}")
         
-        for platform in platforms:
-            if sync:
-                # Run synchronously - wait for result
-                logger.info(f"Running {platform} scrape synchronously...")
-                result = scrape_platform_task(
-                    platform, 
-                    agent.query, 
-                    agent.location, 
-                    str(agent.id),
-                    radius=50, 
-                    min_intent=0.0,
-                    tier=2,
-                    timeout=15
-                )
-                results.append(f"{platform}: {result}")
+        # Build scraper instances
+        scraper_instances = []
+        for platform in platform_names:
+            if platform in SCRAPER_REGISTRY:
+                scraper_instances.append(SCRAPER_REGISTRY[platform])
             else:
-                # Run via Celery (fire and forget)
-                from app.core.celery_app import send_task
-                send_task("scrape_platform_task",
-                    platform, 
-                    agent.query, 
-                    agent.location, 
-                    str(agent.id),
-                    radius=50, 
-                    min_intent=0.0,
-                    tier=2,
-                    timeout=15
+                logger.warning(f"Platform '{platform}' not in registry")
+        
+        if not scraper_instances:
+            error_msg = "No scraper instances available"
+            logger.error(f"Agent {agent_id}: {error_msg}")
+            return f"Error: {error_msg}"
+        
+        # Run scrapers in parallel with controlled concurrency
+        try:
+            logger.info(f"Agent {agent_id}: Running {len(scraper_instances)} scrapers in parallel")
+            
+            # Use asyncio.run() - safe in Celery worker (sync context)
+            raw_results = asyncio.run(
+                run_scrapers_parallel(
+                    scrapers=scraper_instances,
+                    query=agent.query,
+                    location=agent.location or "Kenya"
                 )
-        
-        # Update agent last run time
-        agent.last_heartbeat = datetime.utcnow()
-        db.commit()
-        
-        if sync:
-            return f"Agent {agent.name} completed. Results: {'; '.join(results)}"
-        return f"Agent {agent.name} discovery initiated on {len(platforms)} platforms."
+            )
+            
+            logger.info(f"Agent {agent_id}: Scraping complete. {len(raw_results)} total results")
+            
+            # Cache results for future queries
+            if raw_results:
+                set_cached(agent.query, raw_results, agent.location or "Kenya")
+                # Queue leads for ingestion
+                ingest_leads_task.delay(raw_results)
+            
+            success = True
+            return f"Agent {agent.name}: {len(raw_results)} results from {len(scraper_instances)} platforms"
+            
+        except Exception as scrape_e:
+            error_msg = f"Scraping failed: {str(scrape_e)}"
+            logger.error(f"Agent {agent_id}: {error_msg}")
+            return f"Error: {error_msg}"
+            
     except Exception as e:
+        error_msg = str(e)
+        logger.error(f"CRITICAL: Agent {agent_id} execution failed: {e}")
         db.rollback()
-        logger.error(f"CRITICAL: Agent {agent_id} execution failed. Error: {e}")
-        return f"Error: {e}"
+        return f"Error: {error_msg}"
     finally:
+        # Mark execution complete in scheduler (updates next_run_at)
+        complete_agent_execution(db, str(agent_id), success=success, error_message=error_msg)
         db.close()
 
-fallback_manager.register_task("run_agent_task", run_agent_task)
 
-
-@celery_app.task(name="cleanup_old_leads")
+@celery.task(name="cleanup_old_leads")
 def cleanup_old_leads():
     """Remove leads older than 4 days to maintain freshness."""
     db = SessionLocal()
@@ -621,10 +606,8 @@ def cleanup_old_leads():
     finally:
         db.close()
 
-fallback_manager.register_task("cleanup_old_leads", cleanup_old_leads)
 
-
-@celery_app.task(name="update_lead_availability")
+@celery.task(name="update_lead_availability")
 def update_lead_availability():
     """Update availability status based on time passed."""
     db = SessionLocal()
@@ -641,12 +624,6 @@ def update_lead_availability():
     finally:
         db.close()
 
-fallback_manager.register_task("update_lead_availability", update_lead_availability)
-
-
-# =============================================================================
-# BACKWARD COMPATIBILITY EXPORTS
-# =============================================================================
 
 __all__ = [
     'celery_app',

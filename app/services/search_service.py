@@ -21,7 +21,7 @@ from app.scrapers.registry import get_active_scrapers_sorted, get_scraper_name
 from app.db.database import SessionLocal
 from app.config.runtime import (
     INTENT_THRESHOLD, INTENT_POINTS_FLOOR, CONFIDENCE_FLOOR,
-    HIGH_RECALL_MODE, ENABLE_CELERY,
+    HIGH_RECALL_MODE,
     SOURCE_RELIABILITY, SCRAPER_TIMEOUTS, SCRAPER_MAX_RESULTS
 )
 from app.services.intent_engine import calculate_intent_score
@@ -35,7 +35,7 @@ from app.services.urgency_ranker import calculate_urgency_score
 from app.services.persona_detector import detect_persona
 from app.services.confidence_engine import calculate_confidence
 from app.services.page_enricher import enrich_lead_data
-from app.services.cache_service import cache
+from app.core.cache import get_cached, set_cached
 from app.services.validation_service import VALIDATION_SERVICE
 from app.engine.buyer_classifier import BUYER_CLASSIFIER
 from app.engine.search_engine import SEARCH_ENGINE
@@ -277,11 +277,21 @@ async def search(query: str, location: str):
         }
 
     # â”€â”€ CACHE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    cache_key = f"search:v6:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
-    cached = cache.get(cache_key)
+    # CACHE - Check Redis first
+    cached = get_cached(query, location)
     if cached:
-        logger.info(f"✅ Cache hit for '{query}'")
-        return cached
+        logger.info(f"⚡ Cache HIT for '{query}' in {location}")
+        return {
+            "results": cached,
+            "leads": cached,
+            "metrics": {"processing_mode": "cache_hit"},
+            "count": len(cached),
+            "total_signals_captured": len(cached),
+            "total_signals_scanned": len(cached),
+            "buyers_found": len(cached),
+            "status": "success",
+            "message": f"Found {len(cached)} leads (from cache)"
+        }
 
     # Use engine as single source of truth so legacy and engine paths are identical.
     try:
@@ -313,7 +323,7 @@ async def search(query: str, location: str):
             ),
         }
         if leads:
-            cache.set(cache_key, response, ttl_seconds=1200)
+            set_cached(query, leads, location)
         return response
     except Exception as e:
         logger.warning(f"Engine delegation failed; using legacy path: {e}")
@@ -467,19 +477,14 @@ async def search(query: str, location: str):
         except Exception as e:
             logger.debug(f"Engine fallback unavailable: {e}")
 
-    # â”€â”€ OPTIONAL: Background DB save with fallback â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if ENABLE_CELERY and raw_results:
+    # Queue leads for background DB ingestion
+    if raw_results:
         try:
-            from app.core.celery_app import send_task
-            result = send_task("ingest_leads_task", raw_results)
-            if result.get("status") == "queued":
-                logger.info(f"ðŸ“¨ Sent to Celery for background DB save (Task ID: {result.get('task_id')})")
-            elif result.get("status") == "completed_direct":
-                logger.info("âœ… Ingestion completed directly (Celery unavailable)")
-            else:
-                logger.warning(f"Ingestion status: {result.get('status')}")
+            from app.core.celery_worker import ingest_leads_task
+            task = ingest_leads_task.delay(raw_results)
+            logger.info(f"Queued {len(raw_results)} leads for background ingestion. Task ID: {task.id}")
         except Exception as e:
-            logger.debug(f"Background save unavailable: {e}")
+            logger.warning(f"Failed to queue leads for ingestion: {e}")
 
     # â”€â”€ RESPONSE â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     response = {

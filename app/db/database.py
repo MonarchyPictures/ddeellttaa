@@ -2,12 +2,16 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 import os
 
-# Use PostgreSQL exclusively for production, fallback to SQLite for local
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./intent_radar_v3.db").strip()
+# PostgreSQL is REQUIRED in production (Railway provides this)
+# Local development can use: export DATABASE_URL="sqlite:///./local.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
-    # Should not happen with default, but good safety
-    raise ValueError("DATABASE_URL environment variable is required.")
+    raise RuntimeError(
+        "DATABASE_URL environment variable is required. "
+        "In Railway, add a Postgres plugin. "
+        "For local dev: export DATABASE_URL='sqlite:///./local.db'"
+    )
 
 # Render/Heroku fix: SQLAlchemy requires 'postgresql://' instead of 'postgres://'
 if DATABASE_URL.startswith("postgres://"):
@@ -15,7 +19,7 @@ if DATABASE_URL.startswith("postgres://"):
 
 # Connection args
 if "sqlite" in DATABASE_URL:
-    # SQLite-specific config for local testing
+    # SQLite-specific config for local testing only
     connect_args = {"check_same_thread": False}
     engine_args = {
         "pool_pre_ping": True,

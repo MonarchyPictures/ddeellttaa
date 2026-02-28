@@ -6,13 +6,6 @@ from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
-try:
-    from playwright.sync_api import sync_playwright
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-    sync_playwright = None 
-
 from app.core.resilience import CircuitBreaker, exponential_backoff
 from app.core.proxy_manager import PROXY_MANAGER
 from app.core.ai_extraction import AIExtractionService, AI_EXTRACTOR
@@ -87,36 +80,16 @@ class BaseScraper(ABC):
         Wraps the legacy 'scrape' method and ensures async execution with resilience.
         """
         
-        # 🛡️ CIRCUIT BREAKER WRAPPER
-        # If scraper is failing repeatedly, circuit breaker will block execution immediately.
+        # CIRCUIT BREAKER WRAPPER
         try:
             return await self._execute_search(query, location)
         except Exception as e:
-            logger.error(f"❌ Scraper '{self.__class__.__name__}' failed: {e}")
+            logger.error(f"Scraper '{self.__class__.__name__}' failed: {e}")
             # Self-healing: Return empty list instead of crashing
             return []
 
     async def _execute_search(self, query: str, location: str) -> List[Dict[str, Any]]:
         """Internal search execution with circuit breaker logic."""
-        
-        def run_scrape():
-            # 🔄 PROXY & UA ROTATION
-            # Update UA for every request
-            self.user_agent = random.choice(USER_AGENTS)
-            
-            # Check if scrape is async
-            if asyncio.iscoroutinefunction(self.scrape):
-                # We can't run async inside sync wrapper easily without new loop
-                # This logic is a bit circular.
-                # Ideally, we call self.scrape directly if async.
-                pass 
-            else:
-                full_query = f"{query} {location}"
-                return self.scrape(full_query, time_window_hours=24)
-
-        # 🛡️ CIRCUIT BREAKER CALL
-        # Since circuit breaker is sync, we wrap the sync call.
-        # For async scrapers, we need async circuit breaker or wrap async call.
         
         if asyncio.iscoroutinefunction(self.scrape):
              # Direct async call with manual circuit breaker logic
@@ -125,7 +98,7 @@ class BaseScraper(ABC):
                  if (datetime.now().timestamp() - (self.circuit_breaker.last_failure_time or 0)) > self.circuit_breaker.recovery_timeout:
                      self.circuit_breaker.state = "HALF_OPEN"
                  else:
-                     logger.warning(f"🔌 Circuit Breaker '{self.__class__.__name__}' OPEN. Skipping.")
+                     logger.warning(f"Circuit Breaker '{self.__class__.__name__}' OPEN. Skipping.")
                      return []
 
              try:
@@ -161,7 +134,7 @@ class BaseScraper(ABC):
     def _process_signals(self, signals: List[Dict[str, Any]], location: str) -> List[Dict[str, Any]]:
         results = []
         for s in signals:
-            # 🧠 AI Extraction Enrichment
+            # AI Extraction Enrichment
             text = s.get("text") or s.get("snippet") or ""
             ai_data = AI_EXTRACTOR.extract(text)
             
@@ -185,85 +158,78 @@ class BaseScraper(ABC):
             })
         return results 
 
-    def get_page_content(self, url, wait_selector=None): 
-        print("Navigating to:", url)
-        logger.info(f"PLAYWRIGHT: Fetching {url} with hardened stealth")
+    async def get_page_content(self, url, wait_selector=None):
+        """
+        Async method to get page content using shared browser instance.
+        Uses Railway-safe browser configuration.
+        """
+        from app.core.browser_manager import new_page, close_page
         
-        if not PLAYWRIGHT_AVAILABLE or sync_playwright is None:
-            logger.warning(f"PLAYWRIGHT: Not available, skipping {url}")
-            return ""
-            
+        logger.info(f"PLAYWRIGHT: Fetching {url}")
+        
+        page = None
         try:
-            with sync_playwright() as p: 
-                browser = p.chromium.launch( 
-                    headless=True, 
-                    args=[ 
-                        "--disable-blink-features=AutomationControlled", 
-                        "--no-sandbox", 
-                        "--disable-dev-shm-usage" 
-                    ] 
-                ) 
-        
-                context = browser.new_context( 
-                    user_agent=random.choice(USER_AGENTS), 
-                    locale="en-KE", 
-                    timezone_id="Africa/Nairobi" 
-                ) 
-        
-                page = context.new_page() 
-                
-                # Retry mechanism for navigation
-                max_retries = 3
-                for attempt in range(max_retries):
+            page = await new_page(block_media=True, timeout_ms=15000)
+            
+            # Set user agent
+            await page.set_extra_http_headers({"User-Agent": random.choice(USER_AGENTS)})
+            
+            # Navigate with retry
+            max_retries = 2
+            for attempt in range(max_retries):
+                try:
+                    await page.goto(url, wait_until="domcontentloaded")
+                    break
+                except Exception as e:
+                    if attempt == max_retries - 1:
+                        logger.error(f"Failed to navigate to {url} after {max_retries} attempts: {e}")
+                        raise e
+                    logger.warning(f"Navigation to {url} failed (attempt {attempt+1}), retrying...")
+                    await asyncio.sleep(1)
+            
+            # Handle cookie banners
+            for text in ["Accept", "Accept all", "I agree", "Allow"]:
+                try:
+                    await page.click(f"text={text}", timeout=1000)
+                    break
+                except:
+                    pass
+            
+            # Scroll to load more content
+            for i in range(2):
+                await page.evaluate("window.scrollBy(0, window.innerHeight)")
+                await asyncio.sleep(0.5)
+            
+            # Wait for selector if specified
+            if wait_selector:
+                try:
+                    await page.wait_for_selector(wait_selector, timeout=5000)
+                except:
+                    # Try fallback selectors
                     try:
-                        page.goto(url, timeout=45000)
-                        break
-                    except Exception as e:
-                        if attempt == max_retries - 1:
-                            logger.error(f"Failed to navigate to {url} after {max_retries} attempts: {e}")
-                            raise e
-                        logger.warning(f"Navigation to {url} failed (attempt {attempt+1}/{max_retries}), retrying in 2s...")
-                        import time
-                        time.sleep(2 * (attempt + 1)) # Exponential backoff
-        
-                for text in ["Accept", "Accept all", "I agree"]: 
-                    try: 
-                        page.click(f"text={text}", timeout=2000) 
-                        break 
-                    except: 
-                        pass 
-        
-                # 📜 Scroll to Load More Content (Handles lazy-loading)
-                print(f"Scrolling to load content for {url}...")
-                for i in range(2):
-                    page.evaluate("window.scrollBy(0, window.innerHeight)")
-                    page.wait_for_timeout(2000) # wait for content to load
-        
-                if wait_selector: 
-                    try:
-                        # Primary selector 
-                        page.wait_for_selector(wait_selector, timeout=5000) 
-                    except Exception as e:
-                        print(f"Primary selector '{wait_selector}' failed, trying fallback...")
-                        try:
-                            # Fallback for dynamic layout
-                            page.wait_for_selector("[role='main'], [role='presentation'], .main-content, #main", timeout=5000)
-                        except Exception as fe:
-                            # If all selectors fail, just log and continue with whatever we have
-                            html_len = len(page.content())
-                            print(f"PLAYWRIGHT: All selectors failed, but got {html_len} chars of HTML")
-                            logger.warning(f"PLAYWRIGHT: Both primary and fallback selectors failed at {url}, HTML len: {html_len}")
-        
-                # Use Playwright's native wait instead of blocking time.sleep
-                page.wait_for_timeout(random.uniform(1500, 3000))
-        
-                html = page.content() 
-                browser.close() 
-                return html
+                        await page.wait_for_selector("[role='main'], body", timeout=3000)
+                    except:
+                        pass
+            
+            html = await page.content()
+            return html
+            
         except Exception as e:
-            print("PLAYWRIGHT ERROR:", str(e))
-            logger.error(f"PLAYWRIGHT death at {url}: {str(e)}")
+            logger.error(f"PLAYWRIGHT error at {url}: {e}")
             return ""
+        finally:
+            if page:
+                await close_page(page)
+
+    # Legacy sync version for backward compatibility
+    def get_page_content_sync(self, url, wait_selector=None):
+        """Synchronous wrapper for get_page_content."""
+        try:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(self.get_page_content(url, wait_selector))
+        except RuntimeError:
+            # No event loop running
+            return asyncio.run(self.get_page_content(url, wait_selector))
 
     def extract_contact_info(self, text: str) -> Dict[str, Optional[str]]:
         """
@@ -272,7 +238,7 @@ class BaseScraper(ABC):
         import re
         contact = {"phone": None, "whatsapp": None, "email": None}
         
-        # Phone regex as requested: +254... or 07...
+        # Phone regex: +254... or 07...
         phone_regex = r'(\+254\d{9}|07\d{8})'
         phones = re.findall(phone_regex, text)
         
