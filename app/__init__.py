@@ -1,1 +1,3 @@
 # Delta 9 API App Package
+# BUILD: 2026-02-27T20:20:00Z
+# DEBUG: ENABLED

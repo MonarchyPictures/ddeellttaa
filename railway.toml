@@ -2,7 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python -m app.main"
+startCommand = "find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null; python -B -m app.main"
 restartPolicyType = "on_failure"
 
 # Force rebuild timestamp: 2026-02-27T20:00:00Z

@@ -1,3 +1,11 @@
+# DEBUG BUILD: 2026-02-27T20:20:00Z
+import logging
+logging.basicConfig(level=logging.INFO)
+_logger = logging.getLogger("delta9")
+_logger.info("="*60)
+_logger.info("MAIN.PY LOADED - VERSION 2026-02-27-DEBUG-V2")
+_logger.info("="*60)
+
 import os
 from dotenv import load_dotenv
 
@@ -5,7 +13,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import uvicorn
-import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,13 +21,7 @@ from starlette.responses import FileResponse
 import time
 
 # Logging Setup
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("delta9")
-
-# DEBUG: Verify this file is loaded
-logger.info("="*60)
-logger.info("MAIN.PY LOADED - VERSION 2026-02-27-DEBUG")
-logger.info("="*60)
 
 # Sentry Setup (Optional but Elite)
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
