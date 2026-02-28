@@ -2,8 +2,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from .buyer_classifier import get_intent_score
-
 from datetime import datetime, timedelta, timezone
 
 def calculate_buyer_score(lead: dict, target_location: str = "Nairobi") -> float:
