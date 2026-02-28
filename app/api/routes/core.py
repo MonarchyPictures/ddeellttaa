@@ -165,6 +165,10 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
         if leads:
             background_tasks.add_task(save_leads_to_db, leads, query)
 
+        # DEBUG: Log final response size
+        print(f"[API RESPONSE DEBUG] Returning {len(leads)} leads to frontend for query '{query}'")
+        logger.info(f"[API RESPONSE DEBUG] Response payload size: {len(leads)} leads")
+        
         return {
             "results": leads,
             "leads": leads,
@@ -173,7 +177,11 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
             "message": f"Found {len(leads)} leads" if leads else "No leads found. Try different keywords.",
             "query": query,
             "location": location,
-            "mode": "high_recall_pipeline"
+            "mode": "high_recall_pipeline",
+            "debug_info": {
+                "scraper_count": len(SCRAPER_REGISTRY),
+                "scraper_names": list(SCRAPER_REGISTRY.keys())
+            }
         }
         
     except Exception as e:

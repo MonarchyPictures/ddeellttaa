@@ -173,6 +173,12 @@ def process_high_recall_results(raw_results: List[Dict[str, Any]]) -> List[Dict[
         # Calculate intent score
         score = calculate_kenyan_intent_score(full_text)
         
+        # DEBUG: Bypass threshold in HIGH_RECALL_MODE to test if scoring is too strict
+        HIGH_RECALL_MODE = os.getenv("HIGH_RECALL_MODE", "true").lower() == "true"
+        if HIGH_RECALL_MODE and os.getenv("DEBUG_ACCEPT_ALL", "false").lower() == "true":
+            logger.warning(f"[DEBUG] DEBUG_ACCEPT_ALL enabled - accepting all results (score was {score:.2f})")
+            score = max(score, 0.3)  # Force minimum acceptable score
+        
         # Only include if score meets threshold
         if score >= 0.25:  # Low threshold for high recall
             # Determine badge
@@ -212,7 +218,11 @@ def process_high_recall_results(raw_results: List[Dict[str, Any]]) -> List[Dict[
     scored_leads.sort(key=lambda x: x["intent_score"], reverse=True)
     
     top_leads = scored_leads[:20]  # Return top 20
-    logger.info(f"Processed {len(raw_results)} raw results -> {len(scored_leads)} scored -> {len(top_leads)} top leads")
+    logger.info(f"[FILTER DEBUG] Input: {len(raw_results)} raw | After dedup: {len(seen_urls)} unique | Scored ≥0.25: {len(scored_leads)} | Top 20: {len(top_leads)}")
+    
+    # Log sample of rejected results for debugging
+    if len(scored_leads) == 0 and len(raw_results) > 0:
+        logger.warning(f"[FILTER DEBUG] All {len(raw_results)} results were filtered out! First result text: {raw_results[0].get('title', '')[:100]}...")
     
     return top_leads
 

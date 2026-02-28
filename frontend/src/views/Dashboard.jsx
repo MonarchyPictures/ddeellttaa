@@ -99,10 +99,28 @@ const Dashboard = () => {
       }
 
       const data = await response.json();
-      console.log('[FRONTEND] Full response:', data);
-      console.log('[FRONTEND] Results count:', data.count || (data.results || data.leads || []).length);
-      console.log('[FRONTEND] Response status:', data.status);
+      
+      // DEBUG: Detailed response inspection
       console.log('[FRONTEND] =============================');
+      console.log('[FRONTEND] RAW RESPONSE:', data);
+      console.log('[FRONTEND] data.results exists:', 'results' in data);
+      console.log('[FRONTEND] data.leads exists:', 'leads' in data);
+      console.log('[FRONTEND] data.count:', data.count);
+      console.log('[FRONTEND] data.status:', data.status);
+      console.log('[FRONTEND] data.results type:', typeof data.results);
+      console.log('[FRONTEND] data.results is array:', Array.isArray(data.results));
+      console.log('[FRONTEND] data.results length:', data.results?.length);
+      console.log('[FRONTEND] data.leads length:', data.leads?.length);
+      
+      // Check if response has the expected structure
+      if (data.results && Array.isArray(data.results)) {
+        console.log('[FRONTEND] ✓ Using data.results');
+      } else if (data.leads && Array.isArray(data.leads)) {
+        console.log('[FRONTEND] ✓ Using data.leads (fallback)');
+      } else {
+        console.error('[FRONTEND] ✗ Neither data.results nor data.leads is a valid array!');
+        console.error('[FRONTEND] Available keys:', Object.keys(data));
+      }
       
       const results = data.results || data.leads || [];
       
