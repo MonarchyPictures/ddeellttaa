@@ -129,7 +129,8 @@ class DuckDuckGoScraper(BaseScraper):
         if not results:
              try:
                  results = search_ddg(simplified_query, 'wt-wt', 10, 'lite')
-             except: pass
+             except Exception as e:
+                 logger.debug(f"DUCKDUCKGO: Lite backend failed: {e}")
 
         if not results:
             logger.warning(f"DUCKDUCKGO: Zero results for '{query}' after all attempts.")
