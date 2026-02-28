@@ -177,32 +177,73 @@ def is_valid_buyer(text: str, url: str = None) -> bool:
     ])
 
     # Seller-heavy text with no explicit buyer signal is not a buyer lead.
-    # RELAXED for HIGH_RECALL_MODE: Allow more leads through
+    # SCORING-BASED CLASSIFICATION for HIGH_RECALL_MODE
     if HIGH_RECALL_MODE:
-        # In high recall mode, only reject if strong seller signals AND no buyer evidence at all
-        if seller_soft_hits >= 3 and not has_buyer_phrase and not has_request_verb:
-            logger.debug("REJECTED (Strong seller signals in high recall mode)")
+        # Calculate buyer intent score (0.0 to 1.0)
+        intent_score = 0.0
+        
+        # Product match (base score)
+        intent_score += 0.3
+        
+        # Budget/price mention (+0.3)
+        if has_budget:
+            intent_score += 0.3
+            
+        # Buyer verb (+0.3)
+        if has_buyer_phrase or has_request_verb:
+            intent_score += 0.3
+            
+        # Question mark (+0.2)
+        if has_question:
+            intent_score += 0.2
+            
+        # Urgency (+0.2)
+        if has_urgency:
+            intent_score += 0.2
+            
+        # First person pronoun (+0.1)
+        if has_first_person:
+            intent_score += 0.1
+        
+        # Swahili buyer terms (+0.2)
+        if any(term in normalized for term in ["natafuta", "nahitaji", "nataka", "iko"]):
+            intent_score += 0.2
+        
+        # Currency mention (+0.2)
+        if re.search(r'\d+\s*(k|m|ksh|kes)', normalized):
+            intent_score += 0.2
+        
+        # Cap at 1.0
+        intent_score = min(intent_score, 1.0)
+        
+        # Seller penalty
+        if seller_soft_hits >= 2:
+            intent_score -= 0.3
+        if seller_soft_hits >= 4:
+            intent_score -= 0.5
+            
+        # Hard reject only obvious sellers
+        has_hard_seller = any(word in normalized for word in SELLER_HARD_REJECT)
+        if has_hard_seller:
+            print(f"SCORING_REJECT: Hard seller signal in: {text[:60]}...")
             return False
-    else:
-        # Standard mode: stricter filtering
-        if seller_soft_hits >= 1 and not has_buyer_phrase and not has_first_person:
-            logger.debug("REJECTED (Seller-heavy text)")
-            return False
-
-    score, _ = calculate_kenyan_intent_score(text)
-    min_score = max(INTENT_POINTS_FLOOR, 20 if HIGH_RECALL_MODE else 30)
-
-    if score < min_score:
-        print(f"CLASSIFIER_REJECT: Score {score} < {min_score} for: {text[:80]}...")
+        
+        # Accept if score >= 0.25 (very low threshold for high recall)
+        print(f"SCORING: intent={intent_score:.2f} seller_hits={seller_soft_hits} text={text[:60]}...")
+        return intent_score >= 0.25
+    
+    # Standard mode: stricter filtering
+    if seller_soft_hits >= 1 and not has_buyer_phrase and not has_first_person:
+        logger.debug("REJECTED (Seller-heavy text)")
         return False
 
-    # High-recall but buyer-safe acceptance:
-    # - explicit buyer phrase, OR
-    # - request-style verb, OR
-    # - multiple buyer evidence cues together
+    score, _ = calculate_kenyan_intent_score(text)
+    min_score = max(INTENT_POINTS_FLOOR, 30)
+
+    if score < min_score:
+        return False
+
     result = has_buyer_phrase or has_request_verb or buyer_evidence >= 3
-    if not result:
-        print(f"CLASSIFIER_REJECT: No buyer evidence (has_buyer={has_buyer_phrase}, has_verb={has_request_verb}, evidence={buyer_evidence}) for: {text[:80]}...")
     return result
 
 

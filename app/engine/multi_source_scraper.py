@@ -173,55 +173,82 @@ class MultiSourceScraper:
     def _search_ddg(
         self, query: str, source: str, location: str
     ) -> List[Dict]:
-        """Search using DuckDuckGo - fast single attempt."""
+        """Search using DuckDuckGo with broad Kenya-optimized queries."""
         if DDGS is None:
             logger.error("DDG not available")
             return []
 
         results = []
+        seen_urls = set()
         
-        try:
-            with DDGS() as ddgs:
-                # Single fast attempt - no retry loops to avoid timeouts
-                ddg_results = list(ddgs.text(
-                    query, 
-                    max_results=self.max_results_per_query,
-                    region='ke-en',
-                    timelimit='w'
-                ))
-
-                for r in ddg_results:
-                    url = r.get('href', '')
-                    title = r.get('title', '')
-                    body = r.get('body', '')
-
-                    if not url:
-                        continue
-
-                    # Basic URL filtering
-                    url_lower = url.lower()
-                    skip_domains = [
-                        'amazon.com', 'ebay.com', 'alibaba.com',
-                        'aliexpress.com', 'wikipedia.org'
-                    ]
-                    if any(d in url_lower for d in skip_domains):
-                        continue
-
-                    results.append({
-                        "source": source,
-                        "url": url,
-                        "title": title or (body[:80] + "..." if body else ""),
-                        "text": f"{title} {body}".strip(),
-                        "body": body,
-                        "location": location,
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    })
+        # BROAD QUERY STRATEGY - Generate multiple variations without strict buyer phrases
+        base_query = query.replace('"', '').strip()
+        broad_queries = [
+            f'"{base_query}" {location}',  # Base product + location
+            f'"{base_query}" {location} budget',  # Budget signal
+            f'"{base_query}" {location} price',  # Price inquiry
+            f'"{base_query}" {location} ?',  # Question pattern
+            f'"{base_query}" {location} natafuta',  # Swahili buyer verb
+            f'"{base_query}" {location} nahitaji',  # Swahili need verb
+            f'"{base_query}" {location} iko',  # Swahili availability
+        ]
+        
+        # Platform-specific broad queries
+        if source == "telegram":
+            broad_queries = [f'site:t.me "{base_query}" {location}']
+        elif source == "facebook_groups":
+            broad_queries = [f'site:facebook.com/groups "{base_query}" {location}']
+        elif source == "twitter":
+            broad_queries = [f'site:twitter.com "{base_query}" {location}']
+        
+        for ddg_query in broad_queries[:3]:  # Limit to first 3 for speed
+            if len(results) >= 5:  # Stop if we have enough results
+                break
                 
-                logger.info(f"DDG ({source}): {len(results)} results")
+            try:
+                with DDGS() as ddgs:
+                    ddg_results = list(ddgs.text(
+                        ddg_query, 
+                        max_results=self.max_results_per_query,
+                        region='ke-en',
+                        timelimit='m'  # Last month for recency
+                    ))
 
-        except Exception as e:
-            logger.error(f"DDG error ({source}): {e}")
+                    for r in ddg_results:
+                        url = r.get('href', '')
+                        title = r.get('title', '')
+                        body = r.get('body', '')
 
+                        if not url or url in seen_urls:
+                            continue
+                        seen_urls.add(url)
+
+                        # Basic URL filtering
+                        url_lower = url.lower()
+                        skip_domains = [
+                            'amazon.com', 'ebay.com', 'alibaba.com',
+                            'aliexpress.com', 'wikipedia.org'
+                        ]
+                        if any(d in url_lower for d in skip_domains):
+                            continue
+
+                        results.append({
+                            "source": source,
+                            "url": url,
+                            "title": title or (body[:80] + "..." if body else ""),
+                            "text": f"{title} {body}".strip(),
+                            "body": body,
+                            "location": location,
+                            "timestamp": datetime.now(timezone.utc).isoformat()
+                        })
+                    
+                    logger.info(f"DDG ({source}) query '{ddg_query[:40]}...': {len(ddg_results)} results")
+
+            except Exception as e:
+                logger.debug(f"DDG error ({source}): {e}")
+                continue
+
+        logger.info(f"DDG total results for {source}: {len(results)}")
         return results
 
     def _search_google_with_fallback(self, query: str, source: str, location: str) -> List[Dict]:
