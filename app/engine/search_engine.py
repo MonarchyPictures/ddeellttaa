@@ -70,17 +70,23 @@ class SearchEngine:
             }
 
         logger.info(f"🔍 ENGINE: '{query}' in '{location}'")
-        print(f"ENGINE_SEARCH_START: {query}")
-
-        # Cache
+        print(f"ENGINE_SEARCH_START: {query}", flush=True)
+        import sys
+        sys.stdout.flush()
+        
+        try:
+            # Cache - DISABLED for debugging
         cache_key = f"engine:v6:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
         cached = cache.get(cache_key)
         if cached:
-            logger.info("✅ Cache hit")
-            return cached
+            logger.info("✅ Cache hit - but running anyway for debug")
+            print(f"CACHE_HIT: Would return {len(cached.get('leads', []))} leads", flush=True)
+            # return cached  # DISABLED - run full search for debugging
 
         # FAST: Try DDG first for quick results
+        print("ENGINE: Starting _fast_ddg_search...", flush=True)
         raw_results = await self._fast_ddg_search(query, location)
+        print(f"ENGINE: _fast_ddg_search returned {len(raw_results)} results", flush=True)
         
         # Generate search plan for additional sources
         plan = self.query_engine.generate_search_plan(query, location)
@@ -115,10 +121,10 @@ class SearchEngine:
         seen_hashes = set()
         
         logger.info(f"🔍 Classifying {len(raw_results)} raw results")
-        print(f"ENGINE_RAW_RESULTS: {len(raw_results)}")
+        print(f"ENGINE_RAW_RESULTS: {len(raw_results)}", flush=True)
         
         if not raw_results:
-            print("ENGINE_NO_RAW_RESULTS - returning empty")
+            print("ENGINE_NO_RAW_RESULTS - returning empty", flush=True)
             return {
                 "results": [],
                 "leads": [],
@@ -185,8 +191,8 @@ class SearchEngine:
                 })
         
         logger.info(f"✅ {len(leads)} leads passed, {len(rejected)} rejected")
-        print(f"ENGINE_LEADS_PASSED: {len(leads)}")
-        print(f"ENGINE_REJECTED: {len(rejected)}")
+        print(f"ENGINE_LEADS_PASSED: {len(leads)}", flush=True)
+        print(f"ENGINE_REJECTED: {len(rejected)}", flush=True)
         
         # Show first 3 rejection reasons
         for r in rejected[:3]:
@@ -306,9 +312,25 @@ class SearchEngine:
             cache.set(cache_key, response, ttl_seconds=1200)
 
         logger.info(f"🏁 {len(leads)} leads, {len(rejected)} rejected")
-        print(f"ENGINE_RETURNING: {len(leads)} leads")
-        print(f"ENGINE_STATUS: {response['status']}")
+        print(f"ENGINE_RETURNING: {len(leads)} leads", flush=True)
+        print(f"ENGINE_STATUS: {response['status']}", flush=True)
         return response
+        
+        except Exception as e:
+            import traceback
+            print(f"ENGINE_ERROR: {str(e)}", flush=True)
+            print(f"ENGINE_TRACEBACK: {traceback.format_exc()}", flush=True)
+            return {
+                "results": [],
+                "leads": [],
+                "metrics": {"error": str(e)},
+                "count": 0,
+                "total_signals_captured": 0,
+                "total_signals_scanned": 0,
+                "buyers_found": 0,
+                "status": "error",
+                "message": f"Search engine error: {str(e)}"
+            }
 
     def _high_intent_ddg_fallback(self, query: str, location: str) -> List[Dict[str, Any]]:
         """

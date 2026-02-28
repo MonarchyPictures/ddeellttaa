@@ -70,5 +70,5 @@ def calculate_intent_score(text: str) -> float:
         score += INTENT_WEIGHT_BUDGET
 
     final_score = max(0.0, min(score, 1.0))
-    print(f"[INTENT_ENGINE] Text: '{text[:50]}...' | Score: {final_score:.2f} | High hits: {high_hits}")
+    print(f"[INTENT_ENGINE] Text: '{text[:50]}...' | Score: {final_score:.2f} | High hits: {high_hits}", flush=True)
     return final_score

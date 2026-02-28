@@ -55,8 +55,8 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
     
     # BACKEND ROUTE TRACE
     print("="*60)
-    print("[BACKEND ROUTE] /api/search HIT")
-    print("[BACKEND ROUTE] Request:", request.model_dump())
+    print("[BACKEND ROUTE] /api/search HIT", flush=True)
+    print("[BACKEND ROUTE] Request:", request.model_dump(), flush=True)
     
     query = request.query.strip()
     

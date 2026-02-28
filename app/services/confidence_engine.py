@@ -44,6 +44,6 @@ def calculate_confidence(
     score = max(score, CONFIDENCE_FLOOR)
     
     final_score = min(score, 0.99)
-    print(f"[CONFIDENCE_ENGINE] Intent: {intent_score:.2f} | Urgency: {urgency_score:.2f} | Source: {source_rel:.2f} | Final: {final_score:.2f}")
+    print(f"[CONFIDENCE_ENGINE] Intent: {intent_score:.2f} | Urgency: {urgency_score:.2f} | Source: {source_rel:.2f} | Final: {final_score:.2f}", flush=True)
     
     return final_score
