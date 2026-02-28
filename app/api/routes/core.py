@@ -1,14 +1,20 @@
 # app/api/routes/core.py
 # ============================================================
-# CORE API ROUTES — Uses the new Search Engine
+# CORE API ROUTES — Kenya High Recall Pipeline
 # ============================================================
 
 import logging
+import asyncio
 from fastapi import APIRouter, Query, BackgroundTasks
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List, Dict, Any
 
-from app.engine.search_engine import SEARCH_ENGINE
+from app.services.kenya_high_recall_pipeline import (
+    generate_high_recall_queries,
+    process_high_recall_results
+)
+from app.services.parallel_scraper_runner import run_scrapers_parallel
+from app.scrapers.registry import SCRAPER_REGISTRY
 from app.services.lead_storage import save_leads_to_db
 from app.config.runtime import DEFAULT_LOCATION, ALLOWED_LOCATIONS
 
@@ -43,19 +49,84 @@ def validate_location(location: str) -> str:
     raise ValueError(f"Location '{location}' is not supported. This system only supports Kenya locations: {', '.join(ALLOWED_LOCATIONS[:10])}...")
 
 
+async def run_high_recall_search(query: str, location: str) -> List[Dict[str, Any]]:
+    """
+    High recall search pipeline:
+    1. Generate multiple broad queries (product + location variants)
+    2. Run all scrapers in parallel for each query
+    3. Deduplicate by URL
+    4. Score and filter results
+    
+    This replaces the strict 'site:t.me + exact buyer phrase' approach
+    with broad queries scored by intent classification.
+    """
+    logger.info(f"🔍 High Recall Search: '{query}' in '{location}'")
+    
+    # Step 1: Generate high recall queries
+    queries = generate_high_recall_queries(query, location)
+    logger.info(f"Generated {len(queries)} high-recall queries: {queries}")
+    
+    # Step 2: Get all available scrapers
+    scraper_instances = list(SCRAPER_REGISTRY.values())
+    logger.info(f"Using {len(scraper_instances)} scrapers: {list(SCRAPER_REGISTRY.keys())}")
+    
+    all_raw_results = []
+    
+    # Step 3: Run each query through parallel scrapers
+    for q in queries:
+        logger.info(f"Running query: '{q}'")
+        try:
+            results = await run_scrapers_parallel(
+                scrapers=scraper_instances,
+                query=q,
+                location=location,
+                hours=24
+            )
+            logger.info(f"Query '{q}' returned {len(results)} results")
+            all_raw_results.extend(results)
+        except Exception as e:
+            logger.error(f"Query '{q}' failed: {e}")
+            continue
+    
+    logger.info(f"Total raw results before dedup: {len(all_raw_results)}")
+    
+    # Step 4: Deduplicate by URL
+    seen = set()
+    deduped = []
+    for r in all_raw_results:
+        url = r.get("url") or r.get("link") or r.get("source_url")
+        if url:
+            if url not in seen:
+                seen.add(url)
+                deduped.append(r)
+        else:
+            # Keep items without URL (might be valid)
+            deduped.append(r)
+    
+    logger.info(f"Results after dedup: {len(deduped)}")
+    
+    # Step 5: Process through high recall pipeline (score & filter)
+    leads = process_high_recall_results(deduped)
+    logger.info(f"Final leads after scoring: {len(leads)}")
+    
+    return leads
+
+
 @router.post("/search")
 async def search_post(request: SearchRequest, background_tasks: BackgroundTasks):
     """
     POST /api/search
-    Finds buyers across web + Telegram.
-    KENYA-ONLY: Only Kenyan locations are supported.
+    Kenya High Recall Pipeline:
+    - Generates multiple broad queries (e.g., "tires Kenya", "tires Kenya price")
+    - Runs all scrapers in parallel
+    - Scores intent with 0.25 threshold (catches informal buyer language)
+    - Returns deduplicated, ranked leads
     """
     import os
     import traceback
     
-    # BACKEND ROUTE TRACE
-    print("="*60)
-    logger.info("[BACKEND ROUTE] /api/search HIT")
+    logger.info("="*60)
+    logger.info("[BACKEND ROUTE] /api/search POST HIT")
     logger.info(f"[BACKEND ROUTE] Request: {request.model_dump()}")
     
     query = request.query.strip()
@@ -73,38 +144,35 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
         }
 
     logger.info(f"🔍 Search: '{query}' in '{location}'")
-    print(f"[BACKEND ROUTE] Query: '{query}' | Location: '{location}'")
     
     # ENV CHECK
-    print("[BACKEND ROUTE] ENV CHECK:")
-    print(f"  SERPAPI_API_KEY: {bool(os.getenv('SERPAPI_API_KEY'))}")
-    print(f"  GOOGLE_CSE_API_KEY: {bool(os.getenv('GOOGLE_CSE_API_KEY'))}")
-    print(f"  REDIS_URL: {bool(os.getenv('REDIS_URL'))}")
-    print(f"  HIGH_RECALL_MODE: {os.getenv('HIGH_RECALL_MODE', 'NOT SET')}")
+    logger.info(f"HIGH_RECALL_MODE: {os.getenv('HIGH_RECALL_MODE', 'NOT SET')}")
+    logger.info(f"SCRAPER_CONCURRENCY: {os.getenv('SCRAPER_CONCURRENCY', '3')}")
 
     try:
-        # Use enhanced search with Telegram
-        print("[BACKEND ROUTE] Calling SEARCH_ENGINE.search_with_telegram...")
-        result = await SEARCH_ENGINE.search_with_telegram(
-            query=query,
-            location=location,
-            include_telegram=request.include_telegram,
-            telegram_hours_back=request.telegram_hours_back,
-            include_all=request.include_all,
-            min_score=request.min_score
-        )
+        # Use Kenya High Recall Pipeline
+        leads = await run_high_recall_search(query, location)
         
-        print(f"[BACKEND ROUTE] Result received: {len(result.get('leads', []))} leads")
-        print(f"[BACKEND ROUTE] Result status: {result.get('status')}")
-        print("="*60)
+        logger.info(f"[BACKEND ROUTE] Result: {len(leads)} leads")
+        logger.info("="*60)
 
         # Background Save
-        if result.get("leads"):
-            background_tasks.add_task(save_leads_to_db, result["leads"], query)
+        if leads:
+            background_tasks.add_task(save_leads_to_db, leads, query)
 
-        return result
+        return {
+            "results": leads,
+            "leads": leads,
+            "count": len(leads),
+            "status": "success" if leads else "no_results",
+            "message": f"Found {len(leads)} leads" if leads else "No leads found. Try different keywords.",
+            "query": query,
+            "location": location,
+            "mode": "high_recall_pipeline"
+        }
+        
     except Exception as e:
-        print(f"[BACKEND ROUTE] ❌ ERROR: {e}")
+        logger.error(f"[BACKEND ROUTE] ❌ ERROR: {e}")
         logger.error(f"[BACKEND ROUTE] TRACEBACK: {traceback.format_exc()}")
         return {
             "results": [], "leads": [],
@@ -127,9 +195,10 @@ async def search_get(
     min_score: float = Query(0.0)
 ):
     """
-    GET /api/search?q=2br+kileleshwa&location=Kenya
+    GET /api/search?q=concrete+mixer&location=Nairobi
     
     Same as POST but via URL parameters.
+    Uses Kenya High Recall Pipeline.
     """
     search_query = q or query
     if not search_query:
@@ -151,20 +220,34 @@ async def search_get(
             "status": "kenya_only_policy"
         }
 
-    result = await SEARCH_ENGINE.search_with_telegram(
-        query=search_query.strip(),
-        location=location,
-        include_all=include_all,
-        include_telegram=include_telegram,
-        telegram_hours_back=telegram_hours_back,
-        min_score=min_score
-    )
+    try:
+        # Use Kenya High Recall Pipeline
+        leads = await run_high_recall_search(search_query.strip(), location)
 
-    # Background Save
-    if result.get("leads"):
-        background_tasks.add_task(save_leads_to_db, result["leads"], search_query)
+        # Background Save
+        if leads:
+            background_tasks.add_task(save_leads_to_db, leads, search_query)
 
-    return result
+        return {
+            "results": leads,
+            "leads": leads,
+            "count": len(leads),
+            "status": "success" if leads else "no_results",
+            "message": f"Found {len(leads)} leads" if leads else "No leads found. Try different keywords.",
+            "query": search_query,
+            "location": location,
+            "mode": "high_recall_pipeline"
+        }
+        
+    except Exception as e:
+        logger.error(f"[BACKEND ROUTE] ❌ ERROR: {e}")
+        return {
+            "results": [], "leads": [],
+            "metrics": {"error": str(e)},
+            "message": f"Search failed: {str(e)}",
+            "count": 0,
+            "status": "error"
+        }
 
 
 @router.get("/categories")
