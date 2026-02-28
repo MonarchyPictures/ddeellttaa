@@ -30,6 +30,7 @@ from app.services.kenya_high_recall_pipeline import (
     generate_high_recall_queries,
     process_high_recall_results
 )
+from app.services.lead_storage import save_leads_to_db
 from app.scrapers.registry import SCRAPER_REGISTRY
 from app.core.cache import get_cached, set_cached
 
@@ -313,53 +314,31 @@ def run_agent_task(agent_id: str):
         leads = process_high_recall_results(all_raw_results)
         logger.info(f"Agent {agent_id}: Processed {len(leads)} leads after scoring")
         
-        # Step 5: Save leads to DB
+        # Step 5: Save leads to DB (same flow as API)
         if leads:
+            # Add agent_id to each lead for tracking
+            for lead in leads:
+                lead['agent_id'] = str(agent.id)
+            
+            # Use same save function as API
+            save_leads_to_db(leads, agent.query)
+            
+            # Create agent-lead links
             for lead_data in leads:
                 try:
-                    # Check for existing URL
-                    existing = db.query(models.Lead).filter(
-                        models.Lead.source_url == lead_data.get("url")
-                    ).first()
-                    
-                    if existing:
-                        # Update if better score
-                        if lead_data.get("intent_score", 0) > existing.intent_score:
-                            existing.intent_score = lead_data.get("intent_score")
-                            existing.ranked_score = lead_data.get("intent_score")
-                            logger.info(f"Updated existing lead with better score")
-                        continue
-                    
-                    # Create new lead
-                    lead = models.Lead(
-                        id=lead_data.get("id", uuid.uuid4()),
-                        agent_id=agent.id,
-                        source_platform=lead_data.get("source", "unknown"),
-                        source_url=lead_data.get("url"),
-                        title=lead_data.get("title", ""),
-                        buyer_request_snippet=lead_data.get("snippet", ""),
-                        product_category=lead_data.get("product_category", "general"),
-                        buyer_name=lead_data.get("buyer_name", "Anonymous"),
-                        contact_phone=lead_data.get("contact_phone"),
-                        intent_score=lead_data.get("intent_score", 0),
-                        confidence_score=lead_data.get("confidence", 0),
-                        ranked_score=lead_data.get("intent_score", 0),
-                        badge=lead_data.get("badge", "COLD"),
-                        is_hot_lead=1 if lead_data.get("badge") == "HOT" else 0,
-                        status=models.CRMStatus.NEW,
-                        created_at=datetime.now(timezone.utc)
-                    )
-                    db.add(lead)
-                    
-                    # Create agent-lead link
-                    agent_lead = models.AgentLead(
-                        agent_id=agent.id,
-                        lead_id=lead.id
-                    )
-                    db.add(agent_lead)
-                    
+                    lead_url = lead_data.get("url")
+                    if lead_url:
+                        lead_record = db.query(models.Lead).filter(
+                            models.Lead.url == lead_url
+                        ).first()
+                        if lead_record:
+                            agent_lead = models.AgentLead(
+                                agent_id=agent.id,
+                                lead_id=lead_record.id
+                            )
+                            db.add(agent_lead)
                 except Exception as e:
-                    logger.error(f"Error saving lead: {e}")
+                    logger.error(f"Error creating agent-lead link: {e}")
                     continue
             
             db.commit()
