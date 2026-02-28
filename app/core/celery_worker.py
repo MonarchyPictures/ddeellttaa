@@ -48,14 +48,14 @@ def ingest_leads_task(raw_results: list):
 
 @celery.task(name="specialops_mission_task")
 def specialops_mission_task(query: str, location: str = "Kenya", agent_id: str = None):
-    """MASTER AGENT MISSION: Autonomous web intelligence routing."""
+    """MASTER AGENT MISSION: Autonomous web intelligence routing.
+    SIMPLIFIED: Scraper → Score → Save (no LeadValidator, no raw lead storage)
+    """
     from app.core.specialops import SpecialOpsAgent
-    from app.utils.normalization import LeadValidator
+    from app.services.kenya_high_recall_pipeline import calculate_kenyan_intent_score
     from app.nlp.duplicate_detector import DuplicateDetector
-    from app.services.market_classifier import is_valid_buyer, calculate_kenyan_intent_score
     
     agent_ops = SpecialOpsAgent()
-    validator = LeadValidator()
     detector = DuplicateDetector()
     
     logger.info(f"Starting SpecialOps Mission: {query} in {location}")
@@ -71,7 +71,7 @@ def specialops_mission_task(query: str, location: str = "Kenya", agent_id: str =
     
     try:
         recent_leads = db.query(models.Lead).filter(
-            models.Lead.request_timestamp >= datetime.now(timezone.utc) - timedelta(hours=24)
+            models.Lead.created_at >= datetime.now(timezone.utc) - timedelta(hours=24)
         ).all()
         recent_texts = [l.buyer_request_snippet for l in recent_leads if l.buyer_request_snippet]
 
@@ -79,74 +79,71 @@ def specialops_mission_task(query: str, location: str = "Kenya", agent_id: str =
         
         for result in mission_results:
             try:
-                raw = {
-                    "source": result.get("source", "specialops"),
-                    "link": result.get("href") or result.get("url"),
-                    "text": result.get("body") or result.get("text") or result.get("data", {}).get("raw_text", ""),
-                    "title": result.get("title") or result.get("data", {}).get("title", ""),
-                    "location": location
-                }
+                text = result.get("body") or result.get("text") or ""
+                url = result.get("href") or result.get("url")
                 
-                if not is_valid_buyer(raw['text'], raw['link']):
-                    logger.info(f"SpecialOps Lead REJECTED (Strict Filter): {raw['link']}")
-                    continue
-
-                intent_points, details = calculate_kenyan_intent_score(raw['text'])
-                if intent_points < 50:
-                    logger.info(f"SpecialOps Lead REJECTED (Score {intent_points} < 50): {raw['link']}")
+                if not text or not url:
                     continue
                 
-                logger.info(f"Normalizing lead from {raw['source']}: {raw['text'][:50]}...")
-                normalized = validator.normalize_lead(raw, db=db)
-                if not normalized:
-                    logger.info(f"Lead rejected by normalization")
+                # SIMPLE PIPELINE: Score directly with high-recall pipeline
+                intent_score = calculate_kenyan_intent_score(text)
+                
+                # Threshold check (0.25 for high recall)
+                if intent_score < 0.25:
+                    logger.debug(f"Rejected (score {intent_score:.2f}): {url}")
                     continue
                 
-                snippet = normalized.get("buyer_request_snippet", "")
-                if snippet and detector.is_duplicate(snippet, recent_texts):
+                # Determine badge
+                if intent_score >= 0.7:
+                    badge = "HOT"
+                elif intent_score >= 0.5:
+                    badge = "WARM"
+                else:
+                    badge = "COLD"
+                
+                # Extract phone
+                import re
+                phone_match = re.search(r'(\+?254\d{9}|0\d{9})', text)
+                phone = phone_match.group(0) if phone_match else None
+                
+                # Deduplication check
+                if text[:200] in recent_texts:
+                    logger.debug(f"Duplicate: {url}")
                     continue
-
+                
+                # Create lead directly (no normalization step)
                 lead = models.Lead(
-                    id=normalized["id"],
-                    source_platform=normalized["source_platform"],
-                    post_link=normalized["post_link"],
-                    timestamp=normalized.get("timestamp", datetime.now()),
-                    location_raw=normalized.get("location_raw"),
-                    property_country="Kenya",
-                    latitude=normalized.get("latitude"),
-                    longitude=normalized.get("longitude"),
-                    buyer_request_snippet=normalized["buyer_request_snippet"],
-                    product_category=normalized["product_category"],
-                    buyer_name=normalized.get("buyer_name", "Anonymous"),
-                    intent_score=normalized["intent_score"],
-                    confidence_score=normalized["confidence_score"],
-                    readiness_level=normalized.get("readiness_level"),
-                    urgency_score=normalized.get("urgency_score"),
-                    budget_info=normalized.get("budget_info"),
-                    product_specs=normalized.get("product_specs"),
-                    deal_probability=normalized.get("deal_probability"),
-                    intent_type=normalized.get("intent_type", "BUYER"),
-                    is_hot_lead=1 if result.get("is_hot_lead") else 0,
-                    whatsapp_ready_data=result.get("whatsapp_ready"),
-                    is_contact_verified=normalized.get("is_contact_verified", 0),
-                    contact_phone=normalized.get("contact_phone"),
-                    contact_email=normalized.get("contact_email"),
-                    contact_flag=normalized.get("contact_flag", "ok"),
-                    contact_reliability_score=normalized.get("contact_reliability_score", 0.0),
-                    preferred_contact_method=normalized.get("preferred_contact_method")
+                    id=uuid.uuid4(),
+                    source_platform=result.get("source", "specialops"),
+                    source_url=url,
+                    buyer_request_snippet=text[:500],
+                    title=text[:200],
+                    product_category="general",
+                    buyer_name="Anonymous",
+                    intent_score=intent_score,
+                    confidence_score=round(intent_score * 100, 2),
+                    badge=badge,
+                    is_hot_lead=1 if intent_score > 0.8 else 0,
+                    contact_phone=phone,
+                    contact_flag="ok" if phone else "missing",
+                    status=models.CRMStatus.NEW,
+                    created_at=datetime.now(timezone.utc)
                 )
                 
-                db.merge(lead)
-                processed_count += 1
-                if snippet:
-                    recent_texts.append(snippet)
+                # Check for URL duplicate
+                existing = db.query(models.Lead).filter(models.Lead.source_url == url).first()
+                if not existing:
+                    db.add(lead)
+                    processed_count += 1
+                    recent_texts.append(text[:200])
+                    logger.info(f"✅ Saved lead from {url} (score: {intent_score:.2f})")
                 
             except Exception as e:
                 logger.error(f"Error processing SpecialOps lead: {e}")
                 continue
                 
         db.commit()
-        logger.info(f"SpecialOps Mission Complete: Found {processed_count} high-confidence leads.")
+        logger.info(f"SpecialOps Mission Complete: Found {processed_count} leads.")
         return f"Processed {processed_count} leads via SpecialOps"
         
     except Exception as e:
@@ -258,40 +255,26 @@ def run_all_agents():
 @celery.task(name="scrape_platform_task")
 def scrape_platform_task(platform: str, query: str, location: str = "Kenya", 
                          agent_id: str = None, radius: int = 50, 
-                         min_intent: float = 0.7, tier: int = 2, timeout: int = 15):
-    """Background task to scrape a platform and save leads."""
+                         min_intent: float = 0.25, tier: int = 2, timeout: int = 15):
+    """Background task to scrape a platform and save leads.
+    
+    SIMPLIFIED PIPELINE: Scraper → Score → Save Lead
+    No LeadValidator, no AgentRawLead, no complex ranking engines.
+    """
     from app.scrapers.registry import SCRAPER_REGISTRY
-    from app.utils.normalization import LeadValidator
-    from app.intelligence.ranking import RankingEngine
-    from app.nlp.duplicate_detector import DuplicateDetector
-    from app.utils.outreach import OutreachEngine
-    from app.core.compliance import ComplianceManager
-    
-    validator = LeadValidator()
-    ranking_engine = RankingEngine()
-    outreach_engine = OutreachEngine()
-    detector = DuplicateDetector()
-    compliance = ComplianceManager()
-    
-    # Platform Compliance (Throttling)
-    try:
-        compliance.wait_for_rate_limit(platform.lower())
-    except Exception as e:
-        logger.error(f"Compliance check failed for {platform}: {e}")
+    from app.services.kenya_high_recall_pipeline import calculate_kenyan_intent_score
     
     # Scrape using registry
     raw_results = []
     try:
-        # Platform name mapping (Agent names -> Registry names)
         PLATFORM_ALIASES = {
-            "google": "serpapi",      # Use SerpAPI for Google searches
-            "tiktok": "twitter",      # Fallback to Twitter for TikTok (similar social)
-            "reddit": "twitter",      # Fallback to Twitter for Reddit (similar forum)
-            "facebook": "facebook_groups",  # Map to registered name
+            "google": "serpapi",
+            "tiktok": "twitter",
+            "reddit": "twitter",
+            "facebook": "facebook_groups",
         }
         
         platform_key = platform.lower()
-        # Check for alias first, then use original
         lookup_key = PLATFORM_ALIASES.get(platform_key, platform_key)
         
         scraper = SCRAPER_REGISTRY.get(lookup_key)
@@ -300,14 +283,11 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
             raw_results = scraper.scrape(query, time_window_hours=24)
         else:
             logger.warning(f"No scraper found for platform: {platform} (looked up: {lookup_key})")
-            logger.warning(f"Available scrapers: {list(SCRAPER_REGISTRY.keys())}")
     except Exception as e:
         logger.error(f"Scraper failed for {platform}: {e}")
     
     db = SessionLocal()
     processed_count = 0
-    alert_count = 0
-    high_value_leads = []
     
     try:
         agent = None
@@ -316,189 +296,89 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
                 agent_id = uuid.UUID(agent_id)
             agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
 
+        # Get recent leads for deduplication
         recent_leads = db.query(models.Lead).filter(
             models.Lead.created_at >= datetime.now() - timedelta(hours=24)
         ).all()
-        recent_texts = [l.buyer_request_snippet for l in recent_leads]
+        recent_urls = {l.source_url for l in recent_leads if l.source_url}
+        recent_texts = {l.buyer_request_snippet[:100] for l in recent_leads if l.buyer_request_snippet}
 
         for raw in raw_results:
             try:
-                if "source" not in raw:
-                    raw["source"] = platform.capitalize()
+                # Extract text and URL
+                text = raw.get("body") or raw.get("text") or raw.get("snippet", "")
+                url = raw.get("href") or raw.get("url") or raw.get("source_url", "")
                 
-                # Save raw lead
-                raw_lead = None
-                try:
-                    raw_text = raw.get("body") or raw.get("text") or raw.get("data", {}).get("raw_text", "") or "N/A"
-                    phone = raw.get("phone") or raw.get("contact", {}).get("phone")
-                    content_hash = hashlib.md5(raw_text.strip().lower().encode('utf-8')).hexdigest()
-                    
-                    is_duplicate = False
-                    if agent_id:
-                        existing_hash = db.query(models.AgentRawLead).filter(
-                            models.AgentRawLead.agent_id == agent_id,
-                            models.AgentRawLead.content_hash == content_hash
-                        ).first()
-                        
-                        if existing_hash:
-                            is_duplicate = True
-                            logger.info(f"Duplicate signal (hash) for agent {agent_id}. Skipping storage.")
-                        elif phone and len(str(phone)) > 5:
-                            existing_phone = db.query(models.AgentRawLead).filter(
-                                models.AgentRawLead.agent_id == agent_id,
-                                models.AgentRawLead.phone == str(phone)
-                            ).first()
-                            if existing_phone:
-                                is_duplicate = True
-                                logger.info(f"Duplicate signal (phone) for agent {agent_id}. Skipping storage.")
-                    
-                    if is_duplicate:
-                        continue
-
-                    raw_lead = models.AgentRawLead(
-                        agent_id=agent_id,
-                        raw_text=raw_text,
-                        content_hash=content_hash,
-                        phone=phone,
-                        source=raw["source"],
-                        source_url=raw.get("href") or raw.get("url") or raw.get("post_link"),
-                        processed=0
-                    )
-                    db.add(raw_lead)
-                    db.commit()
-                    db.refresh(raw_lead)
-                except Exception as raw_e:
-                    logger.error(f"Failed to save AgentRawLead: {raw_e}")
-                    
-                normalized = validator.normalize_lead(raw, db=db)
-                if not normalized:
-                    logger.info(f"Skipping empty normalization for lead from {platform}")
+                if not text or not url:
                     continue
                 
-                # Update Raw Lead with analysis data
-                if raw_lead:
-                    raw_lead.geo_score = normalized.get("geo_score", 0.0)
-                    raw_lead.intent_score = normalized.get("intent_score", 0.0)
-                    raw_lead.confidence_score = normalized.get("confidence_score", 0.0)
-                    raw_lead.processed = 1
+                # SIMPLE PIPELINE: Score directly
+                intent_score = calculate_kenyan_intent_score(text)
                 
-                # Ranking
-                ranked_score = ranking_engine.calculate_score(normalized)
-                priority_class = ranking_engine.classify_lead(ranked_score)
-                
-                if raw_lead:
-                    raw_lead.ranked_score = ranked_score
-                    db.add(raw_lead)
-                
-                logger.info(f"Lead Ranked: Score={ranked_score}, Class={priority_class}")
-
-                if normalized.get("intent_score", 0) < min_intent:
-                    logger.info(f"Signal recorded with low intent score: {normalized.get('intent_score')} < {min_intent}")
-
-                # Duplicate Detection
-                if detector.is_duplicate(normalized["buyer_request_snippet"], recent_texts):
-                    logger.info(f"Skipping duplicate lead from {platform}")
+                # Threshold check
+                if intent_score < min_intent:
                     continue
-
-                # Check for history of non-response
-                has_bad_history = outreach_engine.check_non_response_history(
-                    db, 
-                    phone=normalized.get("contact_phone"), 
-                    email=normalized.get("contact_email")
-                )
-
-                # Create lead record
-                lead = models.Lead(
-                    id=normalized["id"],
-                    agent_id=agent.id if agent else None,
-                    source_platform=normalized["source_platform"],
-                    source_url=normalized["source_url"],
-                    location_raw=normalized.get("location_raw"),
-                    buyer_request_snippet=normalized["buyer_request_snippet"],
-                    product_category=normalized["product_category"],
-                    buyer_name=normalized.get("buyer_name", "Anonymous"),
-                    contact_phone=normalized.get("contact_phone"),
-                    contact_email=normalized.get("contact_email"),
-                    intent_score=normalized["intent_score"],
-                    confidence_score=normalized["confidence_score"],
-                    non_response_flag=1 if has_bad_history else 0,
-                    readiness_level=normalized.get("readiness_level"),
-                    urgency_score=normalized.get("urgency_score"),
-                    budget_info=normalized.get("budget_info"),
-                    product_specs=normalized.get("product_specs"),
-                    deal_probability=normalized.get("deal_probability"),
-                    intent_type=normalized.get("intent_type", "BUYER"),
-                    ranked_score=ranked_score,
-                    decision_authority=normalized.get("decision_authority", 0),
-                    prior_research_indicator=normalized.get("prior_research_indicator", 0),
-                    comparison_indicator=normalized.get("comparison_indicator", 0),
-                    is_contact_verified=normalized.get("is_contact_verified", 0),
-                    status=models.CRMStatus.NEW,
-                )
                 
-                existing = db.query(models.Lead).filter(models.Lead.source_url == lead.source_url).first()
-                
-                if existing:
-                    if lead.intent_score > existing.intent_score:
-                        existing.intent_score = lead.intent_score
-                        existing.ranked_score = lead.ranked_score
-                        existing.buyer_request_snippet = lead.buyer_request_snippet
-                        logger.info(f"Updated existing lead {existing.id} with better score")
-                    lead = existing
+                # Determine badge
+                if intent_score >= 0.7:
+                    badge = "HOT"
+                elif intent_score >= 0.5:
+                    badge = "WARM"
                 else:
-                    db.add(lead)
-
-                # Check phone duplicate for agent
-                is_phone_duplicate = False
-                if agent and lead.contact_phone:
-                    existing_agent_leads = db.query(models.AgentLead).join(models.Lead).filter(
-                        models.AgentLead.agent_id == agent.id,
-                        models.Lead.contact_phone == lead.contact_phone
-                    ).first()
-                    if existing_agent_leads:
-                        is_phone_duplicate = True
-                        logger.info(f"Skipping lead for agent {agent.id}: Phone {lead.contact_phone} already discovered.")
-
-                if not existing and not is_phone_duplicate:
-                    if agent:
-                        if priority_class == "HIGH":
-                            lead.notes = f"URGENT MATCH: '{agent.query}' in {agent.location}. Score: {ranked_score:.2f}\n" + (lead.notes or "")
-                            high_value_leads.append(lead)
-                            if raw_lead:
-                                raw_lead.notified = 1
-                        elif priority_class == "MEDIUM":
-                            lead.notes = f"STANDARD MATCH: '{agent.query}' in {agent.location}. Score: {ranked_score:.2f}\n" + (lead.notes or "")
-                            high_value_leads.append(lead)
-                            if raw_lead:
-                                raw_lead.notified = 1
-                        elif priority_class == "LOW":
-                            lead.notes = f"[LOW PRIORITY] Score {ranked_score:.2f}. " + (lead.notes or "")
-                        
-                        agent_lead = models.AgentLead(
-                            agent_id=agent.id,
-                            lead_id=lead.id
-                        )
-                        db.add(agent_lead)
+                    badge = "COLD"
                 
-                    db.add(lead)
-                    processed_count += 1
+                # Deduplication checks
+                if url in recent_urls:
+                    continue
+                if text[:100] in recent_texts:
+                    continue
+                
+                # Extract phone
+                import re
+                phone_match = re.search(r'(\+?254\d{9}|0\d{9})', text)
+                phone = phone_match.group(0) if phone_match else None
+                
+                # Create lead directly
+                lead = models.Lead(
+                    id=uuid.uuid4(),
+                    agent_id=agent.id if agent else None,
+                    source_platform=raw.get("source", platform.capitalize()),
+                    source_url=url,
+                    title=text[:200],
+                    buyer_request_snippet=text[:500],
+                    product_category="general",
+                    buyer_name="Anonymous",
+                    contact_phone=phone,
+                    contact_flag="ok" if phone else "missing",
+                    intent_score=intent_score,
+                    confidence_score=round(intent_score * 100, 2),
+                    ranked_score=round(intent_score, 2),
+                    badge=badge,
+                    is_hot_lead=1 if intent_score > 0.8 else 0,
+                    status=models.CRMStatus.NEW,
+                    created_at=datetime.now(timezone.utc)
+                )
+                
+                db.add(lead)
+                recent_urls.add(url)
+                recent_texts.add(text[:100])
+                processed_count += 1
+                
+                # Create agent-lead link if applicable
+                if agent:
+                    agent_lead = models.AgentLead(
+                        agent_id=agent.id,
+                        lead_id=lead.id
+                    )
+                    db.add(agent_lead)
                     
             except Exception as e:
                 logger.error(f"Error processing lead from {platform}: {e}")
                 continue
-        
-        # Batch notification
-        if agent and high_value_leads:
-            count = len(high_value_leads)
-            notification = models.Notification(
-                lead_id=high_value_leads[0].id,
-                agent_id=agent.id,
-                message=f"Agent '{agent.name}': {count} New High-Intent Leads found on {platform}."
-            )
-            db.add(notification)
-            alert_count = 1
 
         db.commit()
+        logger.info(f"Processed {processed_count} leads from {platform}")
+        
     except Exception as e:
         db.rollback()
         logger.error(f"Error saving leads from {platform}: {e}")
@@ -506,7 +386,7 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
     finally:
         db.close()
         
-    return f"Processed {processed_count} leads ({alert_count} alerts) from {platform} in {location}"
+    return f"Processed {processed_count} leads from {platform} in {location}"
 
 
 @celery.task(name="run_agent_task")

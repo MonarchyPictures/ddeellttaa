@@ -10,7 +10,6 @@ from app.db.base_class import Base
 # Imported definitions
 from app.models.lead import Lead, ContactStatus, CRMStatus
 from app.models.agent import Agent
-from app.models.agent_raw_lead import AgentRawLead
 
 class BuyerLead(Base):
     """

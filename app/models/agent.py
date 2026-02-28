@@ -28,8 +28,6 @@ class Agent(Base):
 
     created_at = Column(DateTime, server_default=func.now())
 
-    raw_leads = relationship("AgentRawLead", back_populates="agent")
-
     def initialize_schedule(self):
         now = datetime.utcnow()
         self.start_time = now
