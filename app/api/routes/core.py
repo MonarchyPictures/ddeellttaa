@@ -55,8 +55,8 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
     
     # BACKEND ROUTE TRACE
     print("="*60)
-    print("[BACKEND ROUTE] /api/search HIT", flush=True)
-    print("[BACKEND ROUTE] Request:", request.model_dump(), flush=True)
+    logger.info("[BACKEND ROUTE] /api/search HIT")
+    logger.info(f"[BACKEND ROUTE] Request: {request.model_dump()}")
     
     query = request.query.strip()
     
@@ -105,7 +105,7 @@ async def search_post(request: SearchRequest, background_tasks: BackgroundTasks)
         return result
     except Exception as e:
         print(f"[BACKEND ROUTE] ❌ ERROR: {e}")
-        print(f"[BACKEND ROUTE] TRACEBACK: {traceback.format_exc()}")
+        logger.error(f"[BACKEND ROUTE] TRACEBACK: {traceback.format_exc()}")
         return {
             "results": [], "leads": [],
             "metrics": {"error": str(e)},

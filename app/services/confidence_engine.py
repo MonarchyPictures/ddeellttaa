@@ -44,6 +44,6 @@ def calculate_confidence(
     score = max(score, CONFIDENCE_FLOOR)
     
     final_score = min(score, 0.99)
-    print(f"[CONFIDENCE_ENGINE] Intent: {intent_score:.2f} | Urgency: {urgency_score:.2f} | Source: {source_rel:.2f} | Final: {final_score:.2f}", flush=True)
+    import logging; logging.getLogger(__name__).info(f"CONFIDENCE_ENGINE: intent={intent_score:.2f} urgency={urgency_score:.2f} source={source_rel:.2f} final={final_score:.2f}")
     
     return final_score
