@@ -282,32 +282,24 @@ class QueryIntelligenceEngine:
             if fallback_platform not in target_platforms:
                 target_platforms.append(fallback_platform)
 
+        # ULTRA BROAD: Simple product + location queries only
+        # Let classifier detect buyer intent from raw results
         for platform in target_platforms:
-            templates = self.platform_templates.get(platform, [])
-            platform_queries = []
-
-            for template in templates:
-                # Use first 3 buyer phrases per template to avoid too many queries
-                for bp in buyer_phrases[:3]:
-                    search_query = template.format(
-                        buyer_phrase=bp,
-                        q=query,
-                        loc=location
-                    )
-                    # Add negative terms
-                    for neg in config.get("negative_terms", []):
-                        search_query += f" {neg}"
-
-                    platform_queries.append(search_query)
-
-            # Also add a simple direct query per platform
-            platform_queries.append(f'"{query}" {location} "looking for"')
-            platform_queries.append(f'"{query}" {location} "natafuta"')
-
-            # Deduplicate
-            platform_queries = list(dict.fromkeys(platform_queries))
-            plan["platforms"][platform] = platform_queries[:10]  # Max 10 per platform
-            plan["total_queries"] += len(plan["platforms"][platform])
+            # Single simple query: "product" location
+            simple_query = f'"{query}" {location}'
+            
+            # Platform-specific simple query
+            if platform == "telegram":
+                simple_query = f'site:t.me "{query}" {location}'
+            elif platform == "facebook_groups":
+                simple_query = f'site:facebook.com/groups "{query}" {location}'
+            elif platform == "twitter":
+                simple_query = f'site:twitter.com "{query}" {location}'
+            elif platform == "kenyan_forums":
+                simple_query = f'site:kenyatalk.com OR site:wazua.co.ke "{query}" {location}'
+            
+            plan["platforms"][platform] = [simple_query]
+            plan["total_queries"] += 1
 
         logger.info(
             f"Search Plan: category={category}, "

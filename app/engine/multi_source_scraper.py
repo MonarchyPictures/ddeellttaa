@@ -173,7 +173,7 @@ class MultiSourceScraper:
     def _search_ddg(
         self, query: str, source: str, location: str
     ) -> List[Dict]:
-        """Search using DuckDuckGo with broad Kenya-optimized queries."""
+        """Search using DuckDuckGo - ULTRA BROAD: Just product + location, let classifier score."""
         if DDGS is None:
             logger.error("DDG not available")
             return []
@@ -181,19 +181,13 @@ class MultiSourceScraper:
         results = []
         seen_urls = set()
         
-        # BROAD QUERY STRATEGY - Generate multiple variations without strict buyer phrases
+        # ULTRA BROAD: Just product + location. Classifier handles intent detection.
         base_query = query.replace('"', '').strip()
-        broad_queries = [
-            f'"{base_query}" {location}',  # Base product + location
-            f'"{base_query}" {location} budget',  # Budget signal
-            f'"{base_query}" {location} price',  # Price inquiry
-            f'"{base_query}" {location} ?',  # Question pattern
-            f'"{base_query}" {location} natafuta',  # Swahili buyer verb
-            f'"{base_query}" {location} nahitaji',  # Swahili need verb
-            f'"{base_query}" {location} iko',  # Swahili availability
-        ]
         
-        # Platform-specific broad queries
+        # Single simple query: "product" location
+        broad_queries = [f'"{base_query}" {location}']
+        
+        # Platform-specific simple queries (no buyer phrases)
         if source == "telegram":
             broad_queries = [f'site:t.me "{base_query}" {location}']
         elif source == "facebook_groups":
@@ -201,12 +195,10 @@ class MultiSourceScraper:
         elif source == "twitter":
             broad_queries = [f'site:twitter.com "{base_query}" {location}']
         
-        for ddg_query in broad_queries[:3]:  # Limit to first 3 for speed
-            if len(results) >= 5:  # Stop if we have enough results
-                break
-                
+        for ddg_query in broad_queries:
             try:
                 with DDGS() as ddgs:
+                    # Get max results per query
                     ddg_results = list(ddgs.text(
                         ddg_query, 
                         max_results=self.max_results_per_query,
