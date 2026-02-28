@@ -15,7 +15,6 @@ import { useNotifications } from '../context/NotificationContext';
 import {
   API_URL,
   headers,
-  fetchLeadsMeta,
   fetchWithRetry,
   resolveApiUrl
 } from '../utils/api';
@@ -52,17 +51,12 @@ const Dashboard = () => {
     });
   };
 
-  // Initial load
-  useEffect(() => {
-    fetchLeadsMeta(20).then(({ leads: fetchedLeads }) => {
-      if (fetchedLeads && fetchedLeads.length > 0) {
-        const sorted = fetchedLeads.sort((a, b) =>
-          (b.ranked_score || b.intent_score || 0) - (a.ranked_score || a.intent_score || 0)
-        );
-        setLeads(sorted);
-      }
-    });
-  }, []);
+  // NOTE: Removed auto-fetch of /api/leads on mount.
+  // User must search to see leads. This prevents:
+  // 1. Override of search results
+  // 2. Loading stale data
+  // 3. Unnecessary API calls
+  // Search flow: POST /api/search → setLeads(response.results)
 
   const handleSearch = async (e) => {
     e.preventDefault();
