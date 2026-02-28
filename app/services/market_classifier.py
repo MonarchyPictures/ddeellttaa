@@ -105,6 +105,7 @@ def is_valid_buyer(text: str, url: str = None) -> bool:
     # Only hard-reject obvious automated seller content
     for word in SELLER_HARD_REJECT:
         if word in normalized:
+            print(f"CLASSIFIER_REJECT: Hard seller keyword '{word}' in: {text[:80]}...")
             logger.debug(f"REJECTED (Hard Seller): '{word}'")
             return False
 
@@ -181,13 +182,17 @@ def is_valid_buyer(text: str, url: str = None) -> bool:
     min_score = max(INTENT_POINTS_FLOOR, 20 if HIGH_RECALL_MODE else 30)
 
     if score < min_score:
+        print(f"CLASSIFIER_REJECT: Score {score} < {min_score} for: {text[:80]}...")
         return False
 
     # High-recall but buyer-safe acceptance:
     # - explicit buyer phrase, OR
     # - request-style verb, OR
     # - multiple buyer evidence cues together
-    return has_buyer_phrase or has_request_verb or buyer_evidence >= 3
+    result = has_buyer_phrase or has_request_verb or buyer_evidence >= 3
+    if not result:
+        print(f"CLASSIFIER_REJECT: No buyer evidence (has_buyer={has_buyer_phrase}, has_verb={has_request_verb}, evidence={buyer_evidence}) for: {text[:80]}...")
+    return result
 
 
 def calculate_kenyan_intent_score(text: str, query_context: str = None):

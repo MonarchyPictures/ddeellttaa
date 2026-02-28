@@ -242,7 +242,13 @@ async def search(query: str, location: str):
     SerpAPI â†’ Google CSE â†’ Telegram â†’ Facebook â†’ Forums â†’ ... â†’ DuckDuckGo
     """
 
-    # â”€â”€ VALIDATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    import os, traceback
+    print("🚀 Starting search:", query)
+    print("📍 Location:", location)
+    print("🔑 SERPAPI:", bool(os.getenv("SERPAPI_API_KEY")))
+    print("🔑 HIGH_RECALL_MODE:", os.getenv("HIGH_RECALL_MODE", "not set"))
+    try:
+        # â”€â”€ VALIDATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     is_valid, error = VALIDATION_SERVICE.validate_search_request(query, location)
     if not is_valid:
         logger.warning(f"ðŸš« Validation Failed: {error}")
@@ -383,6 +389,8 @@ async def search(query: str, location: str):
     processed_leads = []
     seen_urls = set()
     seen_text_hashes = set()
+    rejected_count = 0
+    print(f"PROCESSING {len(raw_results)} raw results")
 
     for r in raw_results:
         url = r.get("url") or r.get("link") or ""
@@ -405,12 +413,20 @@ async def search(query: str, location: str):
             source = r.get("source") or "Unknown"
             signal = BUYER_CLASSIFIER.classify(text, source)
             if not signal.is_buyer:
+                rejected_count += 1
+                print(f"REJECTED: not buyer - {text[:50]}...")
                 continue
             if signal.confidence < CONFIDENCE_FLOOR:
+                rejected_count += 1
+                print(f"REJECTED: low confidence {signal.confidence}")
                 continue
             if not is_valid_buyer(text, url):
+                rejected_count += 1
+                print(f"REJECTED: market classifier")
                 continue
             if not SEARCH_ENGINE._passes_precision_filter(r, signal, query):
+                rejected_count += 1
+                print(f"REJECTED: precision filter")
                 continue
 
             lead = SEARCH_ENGINE._build_lead(r, signal, query)

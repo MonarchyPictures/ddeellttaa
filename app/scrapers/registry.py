@@ -29,6 +29,14 @@ ACTIVE_SCRAPERS = set()
 
 def register_scraper(name, scraper, priority=None):
     """Register a scraper. Priority from config if not specified."""
+    import os
+    # RAILWAY_MODE: Only use fast scrapers
+    if os.getenv("RAILWAY_ENVIRONMENT"):
+        allowed = {"duckduckgo", "serpapi", "google_cse"}
+        if name not in allowed:
+            print(f"RAILWAY_MODE: Skipping {name}")
+            return
+    
     if priority is None:
         priority = SCRAPER_PRIORITIES.get(name, 10)
     if name in SCRAPER_REGISTRY:
