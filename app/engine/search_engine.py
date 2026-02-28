@@ -70,7 +70,8 @@ class SearchEngine:
             }
 
         logger.info(f"🔍 ENGINE: '{query}' in '{location}'")
-        logger.info(f"ENGINE_SEARCH_START: {query}")
+        logger.info("ENGINE_SEARCH_START: " + str(query))
+        logger.info("ENGINE_DEBUG: Search function entered successfully")
         
         try:
             # Cache - DISABLED for debugging
