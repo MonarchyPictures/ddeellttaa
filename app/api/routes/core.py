@@ -1,6 +1,8 @@
 # app/api/routes/core.py
 # ============================================================
 # CORE API ROUTES — Kenya High Recall Pipeline
+# VERSION: 2026-02-27-HIGH-RECALL-V2
+# CACHE_BUSTER: FORCE_REBUILD_20260227_001
 # ============================================================
 
 import logging
@@ -20,6 +22,9 @@ from app.config.runtime import DEFAULT_LOCATION, ALLOWED_LOCATIONS
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Startup verification log
+logger.info("✅ CORE ROUTES LOADED - HIGH RECALL PIPELINE V2")
 
 
 class SearchRequest(BaseModel):
