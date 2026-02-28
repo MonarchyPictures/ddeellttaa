@@ -5,7 +5,13 @@ from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
-from playwright.sync_api import sync_playwright 
+
+try:
+    from playwright.sync_api import sync_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    sync_playwright = None 
 
 from app.core.resilience import CircuitBreaker, exponential_backoff
 from app.core.proxy_manager import PROXY_MANAGER
@@ -182,6 +188,11 @@ class BaseScraper(ABC):
     def get_page_content(self, url, wait_selector=None): 
         print("Navigating to:", url)
         logger.info(f"PLAYWRIGHT: Fetching {url} with hardened stealth")
+        
+        if not PLAYWRIGHT_AVAILABLE or sync_playwright is None:
+            logger.warning(f"PLAYWRIGHT: Not available, skipping {url}")
+            return ""
+            
         try:
             with sync_playwright() as p: 
                 browser = p.chromium.launch( 
