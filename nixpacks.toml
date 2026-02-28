@@ -1,5 +1,6 @@
 [phases.setup]
 nixPkgs = ["python3", "nodejs", "npm", "ffmpeg"]
+# Force rebuild: 2026-02-27T20:15:00Z
 
 [phases.install]
 cmds = [
