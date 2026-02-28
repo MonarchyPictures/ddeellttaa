@@ -1,6 +1,6 @@
-# app/engine/search_engine.py
+﻿# app/engine/search_engine.py
 # ============================================================
-# SEARCH ENGINE — Updated with priority ordering + low confidence floor
+# SEARCH ENGINE ΓÇö Updated with priority ordering + low confidence floor
 # ============================================================
 
 import asyncio
@@ -50,13 +50,13 @@ class SearchEngine:
         query: str,
         location: str = "Kenya",
         include_all: bool = False,
-        min_score: float = 0.0,    # No minimum — confidence floor handles it
+        min_score: float = 0.0,    # No minimum ΓÇö confidence floor handles it
         allow_legacy_fallback: bool = True
     ) -> Dict[str, Any]:
 
         # KENYA-ONLY VALIDATION
         if not self._validate_kenya_location(location):
-            logger.warning(f"🚫 KENYA-ONLY POLICY: Rejected location '{location}'")
+            logger.warning(f"≡ƒÜ½ KENYA-ONLY POLICY: Rejected location '{location}'")
             return {
                 "results": [],
                 "leads": [],
@@ -71,78 +71,53 @@ class SearchEngine:
 
         logger.info(f"🔍 ENGINE: '{query}' in '{location}'")
         logger.info("ENGINE_SEARCH_START: " + str(query))
-        logger.info("ENGINE_DEBUG: Search function entered successfully")
-        
-        try:
-            # Cache - DISABLED for debugging
+
+        # Cache
         cache_key = f"engine:v6:{hashlib.md5(f'{query}:{location}'.lower().encode()).hexdigest()}"
         cached = cache.get(cache_key)
         if cached:
-            logger.info("✅ Cache hit - but running anyway for debug")
-            logger.info(f"CACHE_HIT: Would return {len(cached.get('leads', []))} leads")
-            # return cached  # DISABLED - run full search for debugging
+            logger.info("Γ£à Cache hit")
+            return cached
 
-        # FAST: Try DDG first for quick results
-        logger.info("ENGINE: Starting _fast_ddg_search...")
-        raw_results = await self._fast_ddg_search(query, location)
-        logger.info(f"ENGINE: _fast_ddg_search returned {len(raw_results)} results")
-        
-        # Generate search plan for additional sources
+        # Generate search plan (platforms ordered by priority)
         plan = self.query_engine.generate_search_plan(query, location)
+
+        # Sort platforms by priority from config
         sorted_platforms = sorted(
             plan.get("platforms", {}).keys(),
             key=lambda p: SCRAPER_PRIORITIES.get(p, 10),
             reverse=True
         )
-        logger.info(f"📋 Platform order: {sorted_platforms}")
 
-        # Only run scrapers if we don't have enough results from DDG
-        if len(raw_results) < 5:
-            ordered_platforms = {}
-            for p in sorted_platforms:
-                if p in plan["platforms"]:
-                    ordered_platforms[p] = plan["platforms"][p]
-            plan["platforms"] = ordered_platforms
+        logger.info(f"≡ƒôï Platform order: {sorted_platforms}")
 
-            try:
-                scraper_results = await asyncio.wait_for(
-                    self.scraper.execute_search_plan(plan),
-                    timeout=15
-                )
-                raw_results.extend(scraper_results)
-                logger.info(f"📊 Total raw results: {len(raw_results)}")
-            except asyncio.TimeoutError:
-                logger.warning("⏰ Scraper timeout - using DDG results only")
+        # Reorder plan platforms
+        ordered_platforms = {}
+        for p in sorted_platforms:
+            if p in plan["platforms"]:
+                ordered_platforms[p] = plan["platforms"][p]
+        plan["platforms"] = ordered_platforms
+
+        # Execute search with timeout protection
+        try:
+            raw_results = await asyncio.wait_for(
+                self.scraper.execute_search_plan(plan),
+                timeout=25  # Hard limit for search execution
+            )
+            logger.info(f"≡ƒôè Raw results: {len(raw_results)}")
+        except asyncio.TimeoutError:
+            logger.warning("ΓÅ░ Search timeout - returning partial results")
+            raw_results = []
 
         # Classify
         leads = []
         rejected = []
         seen_hashes = set()
-        
-        logger.info(f"🔍 Classifying {len(raw_results)} raw results")
-        logger.info(f"ENGINE_RAW_RESULTS: {len(raw_results)}")
-        
-        if not raw_results:
-            logger.info("ENGINE_NO_RAW_RESULTS - returning empty")
-            return {
-                "results": [],
-                "leads": [],
-                "metrics": {"error": "No raw results from scrapers"},
-                "count": 0,
-                "total_signals_captured": 0,
-                "total_signals_scanned": 0,
-                "buyers_found": 0,
-                "status": "no_results",
-                "message": "No results found. Try different keywords."
-            }
 
         for raw in raw_results:
             text = raw.get("text", "")
             url = raw.get("url", "")
             source = raw.get("source", "")
-            
-            if not text:
-                continue
 
             # Dedup
             text_hash = hashlib.md5(text.lower().strip()[:200].encode()).hexdigest()
@@ -151,11 +126,8 @@ class SearchEngine:
             seen_hashes.add(text_hash)
 
             # Classify
-            try:
-                signal = self.classifier.classify(text, source)
-            except Exception as e:
-                logger.error(f"Classifier error: {e}")
-                continue
+            # BuyerClassifier expects (text, source); passing url here raised runtime TypeError.
+            signal = self.classifier.classify(text, source)
 
             if not self._passes_precision_filter(raw, signal, query):
                 rejected.append({
@@ -188,15 +160,10 @@ class SearchEngine:
                     "url": url,
                     "reason": "Classified as seller",
                 })
-        
-        logger.info(f"✅ {len(leads)} leads passed, {len(rejected)} rejected")
+
         logger.info(f"ENGINE_LEADS_PASSED: {len(leads)}")
         logger.info(f"ENGINE_REJECTED: {len(rejected)}")
         
-        # Show first 3 rejection reasons
-        for r in rejected[:3]:
-            print(f"  REJECTED: {r.get('reason')} - {r.get('url', '')[:50]}...")
-
         # Sort: Source reliability + intent score
         leads.sort(key=lambda x: (
             x.get("source_reliability", 0.5) * 0.3 +
@@ -216,58 +183,6 @@ class SearchEngine:
                     leads = legacy_leads
             except Exception as e:
                 logger.warning(f"Legacy fallback failed: {e}")
-        
-        # RAW RESULTS FALLBACK: if we have raw results but no leads, return them as unclassified
-        if not leads and raw_results:
-            print(f"ENGINE_RAW_FALLBACK: Using {len(raw_results)} raw results")
-            logger.warning(f"Returning {len(raw_results)} raw results as unclassified leads")
-            for raw in raw_results[:10]:  # Limit to top 10
-                leads.append({
-                    "id": hashlib.md5(raw.get("url", "").encode()).hexdigest()[:16],
-                    "buyer_name": "Unknown",
-                    "title": raw.get("title", "")[:100] or raw.get("text", "")[:100],
-                    "price": "Contact for Price",
-                    "location": raw.get("location", location),
-                    "phone": "",
-                    "contact_phone": "",
-                    "email": "",
-                    "contact_email": "",
-                    "source": raw.get("source", "unknown"),
-                    "url": raw.get("url", ""),
-                    "source_url": raw.get("url", ""),
-                    "intent_score": 0.5,
-                    "intent_strength": 0.5,
-                    "buyer_match_score": 0.5,
-                    "confidence": 0.5,
-                    "confidence_score": 0.5,
-                    "urgency_score": 0.5,
-                    "ranked_score": 0.5,
-                    "rank_score": 0.5,
-                    "source_reliability": 0.5,
-                    "buyer_request_snippet": raw.get("text", "")[:300],
-                    "buyer_intent_quote": raw.get("text", "")[:200],
-                    "snippet": raw.get("text", "")[:200],
-                    "intent": raw.get("text", "")[:150],
-                    "market_side": "unknown",
-                    "badge": "WARM",
-                    "verification_flag": "unverified",
-                    "intent_type": "UNKNOWN",
-                    "persona": "unknown",
-                    "timeline": "unknown",
-                    "status": "NEW",
-                    "is_hot_lead": False,
-                    "geo_score": 0.5,
-                    "geo_strength": "medium",
-                    "geo_region": raw.get("location", location),
-                    "whatsapp_url": "",
-                    "whatsapp_link": "",
-                    "created_at": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                    "query": query,
-                    "product": raw.get("title", query),
-                    "ui_filter_status": "shown",
-                    "tap_count": 0
-                })
-        
         # Buyer-intent web probe fallback: avoids no-result dead end when heavy sources timeout.
         if not leads:
             probe_leads = self._high_intent_ddg_fallback(query, location)
@@ -310,26 +225,10 @@ class SearchEngine:
         if leads:
             cache.set(cache_key, response, ttl_seconds=1200)
 
-        logger.info(f"🏁 {len(leads)} leads, {len(rejected)} rejected")
-        logger.info(f"ENGINE_RETURNING: {len(leads)} leads")
-        logger.info(f"ENGINE_STATUS: {response['status']}")
+        logger.info(f"≡ƒÅü {len(leads)} leads, {len(rejected)} rejected")
+        logger.info("ENGINE_RETURNING: " + str(len(leads)) + " leads")
+        logger.info("ENGINE_STATUS: " + response["status"])
         return response
-        
-        except Exception as e:
-            import traceback
-            logger.error(f"ENGINE_ERROR: {str(e)}")
-            logger.error(f"ENGINE_TRACEBACK: {traceback.format_exc()}")
-            return {
-                "results": [],
-                "leads": [],
-                "metrics": {"error": str(e)},
-                "count": 0,
-                "total_signals_captured": 0,
-                "total_signals_scanned": 0,
-                "buyers_found": 0,
-                "status": "error",
-                "message": f"Search engine error: {str(e)}"
-            }
 
     def _high_intent_ddg_fallback(self, query: str, location: str) -> List[Dict[str, Any]]:
         """
@@ -385,61 +284,6 @@ class SearchEngine:
 
         return leads
 
-    async def _fast_ddg_search(self, query: str, location: str) -> List[Dict[str, Any]]:
-        """
-        Fast DDG search that runs first to ensure we always get some results.
-        Runs in thread pool to not block.
-        """
-        if DDGS is None:
-            return []
-        
-        leads = []
-        seen = set()
-        
-        try:
-            loop = asyncio.get_event_loop()
-            
-            def do_ddg_search():
-                results = []
-                try:
-                    with DDGS() as ddgs:
-                        # Simple buyer-focused query
-                        ddg_query = f'"looking for" OR "want to buy" OR "natafuta" "{query}" "{location}"'
-                        rows = list(ddgs.text(ddg_query, region="ke-en", timelimit="m", max_results=10))
-                        
-                        for row in rows:
-                            url = row.get("href", "")
-                            if not url or url in seen:
-                                continue
-                            seen.add(url)
-                            text = f"{row.get('title', '')} {row.get('body', '')}".strip()
-                            results.append({
-                                "url": url,
-                                "source": "duckduckgo",
-                                "title": row.get("title", ""),
-                                "text": text,
-                                "body": row.get("body", ""),
-                                "location": location,
-                                "timestamp": datetime.now(timezone.utc).isoformat(),
-                            })
-                except Exception as e:
-                    logger.debug(f"Fast DDG search error: {e}")
-                return results
-            
-            # Run in thread with timeout
-            leads = await asyncio.wait_for(
-                loop.run_in_executor(None, do_ddg_search),
-                timeout=8
-            )
-            logger.info(f"Fast DDG: {len(leads)} results")
-            
-        except asyncio.TimeoutError:
-            logger.warning("Fast DDG search timed out")
-        except Exception as e:
-            logger.debug(f"Fast DDG search failed: {e}")
-        
-        return leads
-
     async def search_with_telegram(self, query, location="Kenya",
                                      include_telegram=True,
                                      telegram_hours_back=24, **kwargs):
@@ -448,7 +292,7 @@ class SearchEngine:
 
         # KENYA-ONLY VALIDATION
         if not self._validate_kenya_location(location):
-            logger.warning(f"🚫 KENYA-ONLY POLICY: Rejected location '{location}'")
+            logger.warning(f"≡ƒÜ½ KENYA-ONLY POLICY: Rejected location '{location}'")
             return {
                 "results": [],
                 "leads": [],
@@ -458,25 +302,7 @@ class SearchEngine:
                 "message": f"Location '{location}' is not supported. This system only supports Kenya locations."
             }
 
-        # Wrap search in try/except to catch actual errors
-        async def safe_search():
-            try:
-                return await self.search(query, location, **kwargs)
-            except Exception as e:
-                logger.error(f"Search failed with error: {e}")
-                import traceback
-                logger.error(traceback.format_exc())
-                # Return empty result instead of crashing
-                return {
-                    "results": [],
-                    "leads": [],
-                    "metrics": {"error": str(e)},
-                    "count": 0,
-                    "status": "error",
-                    "message": f"Search error: {str(e)}"
-                }
-
-        tasks = [safe_search()]
+        tasks = [self.search(query, location, **kwargs)]
 
         if include_telegram:
             try:

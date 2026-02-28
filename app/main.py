@@ -17,6 +17,11 @@ import time
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("delta9")
 
+# DEBUG: Verify this file is loaded
+logger.info("="*60)
+logger.info("MAIN.PY LOADED - VERSION 2026-02-27-DEBUG")
+logger.info("="*60)
+
 # Sentry Setup (Optional but Elite)
 SENTRY_DSN = os.environ.get("SENTRY_DSN")
 if SENTRY_DSN:
