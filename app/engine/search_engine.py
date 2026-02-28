@@ -3,6 +3,7 @@
 # SEARCH ENGINE — Updated with priority ordering + low confidence floor
 # ============================================================
 
+import asyncio
 import logging
 import hashlib
 import re
