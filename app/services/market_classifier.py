@@ -101,6 +101,17 @@ def is_valid_buyer(text: str, url: str = None) -> bool:
         return False
 
     normalized = normalize_text(text)
+    
+    # HIGH RECALL MODE: Only reject obvious sellers, accept everything else
+    if HIGH_RECALL_MODE:
+        # Check for obvious seller signals
+        has_seller_signal = any(word in normalized for word in SELLER_HARD_REJECT)
+        if has_seller_signal:
+            print(f"HIGH_RECALL_REJECT: Obvious seller signal in: {text[:60]}...")
+            return False
+        # Accept everything else in high recall mode
+        print(f"HIGH_RECALL_ACCEPT: {text[:60]}...")
+        return True
 
     # Only hard-reject obvious automated seller content
     for word in SELLER_HARD_REJECT:

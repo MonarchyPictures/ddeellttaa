@@ -440,6 +440,9 @@ async def search(query: str, location: str):
         except Exception as e:
             logger.error(f"Processing error: {e}")
 
+    print("AFTER CLASSIFIER:", len(processed_leads))
+    print("FINAL LEADS:", len(processed_leads))
+
     # â”€â”€ SORT BY RANKED SCORE (Source quality matters) â”€â”€
     processed_leads.sort(
         key=lambda x: x.get("ranked_score", 0),
