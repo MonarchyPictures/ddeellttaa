@@ -112,11 +112,16 @@ class SearchEngine:
         leads = []
         rejected = []
         seen_hashes = set()
+        
+        logger.info(f"🔍 Classifying {len(raw_results)} raw results")
 
         for raw in raw_results:
             text = raw.get("text", "")
             url = raw.get("url", "")
             source = raw.get("source", "")
+            
+            if not text:
+                continue
 
             # Dedup
             text_hash = hashlib.md5(text.lower().strip()[:200].encode()).hexdigest()
@@ -125,8 +130,11 @@ class SearchEngine:
             seen_hashes.add(text_hash)
 
             # Classify
-            # BuyerClassifier expects (text, source); passing url here raised runtime TypeError.
-            signal = self.classifier.classify(text, source)
+            try:
+                signal = self.classifier.classify(text, source)
+            except Exception as e:
+                logger.error(f"Classifier error: {e}")
+                continue
 
             if not self._passes_precision_filter(raw, signal, query):
                 rejected.append({
@@ -159,6 +167,8 @@ class SearchEngine:
                     "url": url,
                     "reason": "Classified as seller",
                 })
+        
+        logger.info(f"✅ {len(leads)} leads passed, {len(rejected)} rejected")
 
         # Sort: Source reliability + intent score
         leads.sort(key=lambda x: (
@@ -179,6 +189,57 @@ class SearchEngine:
                     leads = legacy_leads
             except Exception as e:
                 logger.warning(f"Legacy fallback failed: {e}")
+        
+        # RAW RESULTS FALLBACK: if we have raw results but no leads, return them as unclassified
+        if not leads and raw_results:
+            logger.warning(f"Returning {len(raw_results)} raw results as unclassified leads")
+            for raw in raw_results[:10]:  # Limit to top 10
+                leads.append({
+                    "id": hashlib.md5(raw.get("url", "").encode()).hexdigest()[:16],
+                    "buyer_name": "Unknown",
+                    "title": raw.get("title", "")[:100] or raw.get("text", "")[:100],
+                    "price": "Contact for Price",
+                    "location": raw.get("location", location),
+                    "phone": "",
+                    "contact_phone": "",
+                    "email": "",
+                    "contact_email": "",
+                    "source": raw.get("source", "unknown"),
+                    "url": raw.get("url", ""),
+                    "source_url": raw.get("url", ""),
+                    "intent_score": 0.5,
+                    "intent_strength": 0.5,
+                    "buyer_match_score": 0.5,
+                    "confidence": 0.5,
+                    "confidence_score": 0.5,
+                    "urgency_score": 0.5,
+                    "ranked_score": 0.5,
+                    "rank_score": 0.5,
+                    "source_reliability": 0.5,
+                    "buyer_request_snippet": raw.get("text", "")[:300],
+                    "buyer_intent_quote": raw.get("text", "")[:200],
+                    "snippet": raw.get("text", "")[:200],
+                    "intent": raw.get("text", "")[:150],
+                    "market_side": "unknown",
+                    "badge": "WARM",
+                    "verification_flag": "unverified",
+                    "intent_type": "UNKNOWN",
+                    "persona": "unknown",
+                    "timeline": "unknown",
+                    "status": "NEW",
+                    "is_hot_lead": False,
+                    "geo_score": 0.5,
+                    "geo_strength": "medium",
+                    "geo_region": raw.get("location", location),
+                    "whatsapp_url": "",
+                    "whatsapp_link": "",
+                    "created_at": raw.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                    "query": query,
+                    "product": raw.get("title", query),
+                    "ui_filter_status": "shown",
+                    "tap_count": 0
+                })
+        
         # Buyer-intent web probe fallback: avoids no-result dead end when heavy sources timeout.
         if not leads:
             probe_leads = self._high_intent_ddg_fallback(query, location)
@@ -351,7 +412,25 @@ class SearchEngine:
                 "message": f"Location '{location}' is not supported. This system only supports Kenya locations."
             }
 
-        tasks = [self.search(query, location, **kwargs)]
+        # Wrap search in try/except to catch actual errors
+        async def safe_search():
+            try:
+                return await self.search(query, location, **kwargs)
+            except Exception as e:
+                logger.error(f"Search failed with error: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                # Return empty result instead of crashing
+                return {
+                    "results": [],
+                    "leads": [],
+                    "metrics": {"error": str(e)},
+                    "count": 0,
+                    "status": "error",
+                    "message": f"Search error: {str(e)}"
+                }
+
+        tasks = [safe_search()]
 
         if include_telegram:
             try:
