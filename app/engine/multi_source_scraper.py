@@ -173,100 +173,54 @@ class MultiSourceScraper:
     def _search_ddg(
         self, query: str, source: str, location: str
     ) -> List[Dict]:
-        """Search using DuckDuckGo."""
+        """Search using DuckDuckGo - fast single attempt."""
         if DDGS is None:
             logger.error("DDG not available")
             return []
 
         results = []
+        
+        try:
+            with DDGS() as ddgs:
+                # Single fast attempt - no retry loops to avoid timeouts
+                ddg_results = list(ddgs.text(
+                    query, 
+                    max_results=self.max_results_per_query,
+                    region='ke-en',
+                    timelimit='w'
+                ))
 
-        # Try with different time filters, regions, and backends to survive anti-bot throttling
-        for timelimit in ['w', 'm', None]:
-            if results:
-                break
-            for region in ['ke-en', 'wt-wt']:
-                if results:
-                    break
-                for backend in [None, 'html', 'lite']:
-                    if results:
-                        break
-                    try:
-                        with DDGS() as ddgs:
-                            kwargs = {
-                                "max_results": self.max_results_per_query,
-                                "region": region,
-                                "timelimit": timelimit
-                            }
-                            if backend:
-                                kwargs["backend"] = backend
-                            ddg_results = list(ddgs.text(query, **kwargs))
+                for r in ddg_results:
+                    url = r.get('href', '')
+                    title = r.get('title', '')
+                    body = r.get('body', '')
 
-                            for r in ddg_results:
-                                url = r.get('href', '')
-                                title = r.get('title', '')
-                                body = r.get('body', '')
+                    if not url:
+                        continue
 
-                                if not url:
-                                    continue
+                    # Basic URL filtering
+                    url_lower = url.lower()
+                    skip_domains = [
+                        'amazon.com', 'ebay.com', 'alibaba.com',
+                        'aliexpress.com', 'wikipedia.org'
+                    ]
+                    if any(d in url_lower for d in skip_domains):
+                        continue
 
-                                # Basic URL filtering
-                                url_lower = url.lower()
-                                skip_domains = [
-                                    'amazon.com', 'ebay.com', 'alibaba.com',
-                                    'aliexpress.com', 'wikipedia.org'
-                                ]
-                                if any(d in url_lower for d in skip_domains):
-                                    continue
+                    results.append({
+                        "source": source,
+                        "url": url,
+                        "title": title or (body[:80] + "..." if body else ""),
+                        "text": f"{title} {body}".strip(),
+                        "body": body,
+                        "location": location,
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    })
+                
+                logger.info(f"DDG ({source}): {len(results)} results")
 
-                                # Platform validation for specific sources
-                                if source == "facebook_groups":
-                                    if 'facebook.com' not in url_lower:
-                                        continue
-                                elif source == "twitter":
-                                    if not any(d in url_lower for d in ['twitter.com', 'x.com']):
-                                        continue
-                                elif source == "reddit":
-                                    if 'reddit.com' not in url_lower:
-                                        continue
-                                elif source == "kenyan_forums":
-                                    forum_domains = ['kenyatalk.com', 'wazua.co.ke', 'jamiiforums.com']
-                                    if not any(d in url_lower for d in forum_domains):
-                                        continue
-                                elif source == "whatsapp":
-                                    if 'chat.whatsapp.com' not in url_lower:
-                                        continue
-                                elif source == "telegram":
-                                    if 't.me' not in url_lower:
-                                        continue
-                                elif source == "jiji_wanted":
-                                    if 'jiji.co.ke' not in url_lower:
-                                        continue
-                                    if not any(marker in url_lower for marker in ['wanted', 'looking-for']):
-                                        continue
-
-                                results.append({
-                                    "source": source,
-                                    "url": url,
-                                    "title": title or (body[:80] + "..." if body else ""),
-                                    "text": f"{title} {body}".strip(),
-                                    "body": body,
-                                    "location": location,
-                                    "timestamp": datetime.now(timezone.utc).isoformat()
-                                })
-
-                            if ddg_results:
-                                logger.debug(
-                                    f"DDG ({source}): {len(results)} results for timelimit={timelimit} "
-                                    f"region={region} backend={backend}"
-                                )
-
-                    except Exception as e:
-                        err = str(e).lower()
-                        if 'ratelimit' in err or '429' in err:
-                            logger.warning("DDG rate limited. Waiting...")
-                            time.sleep(random.uniform(8, 15))
-                        else:
-                            logger.error(f"DDG error ({source}): {e}")
+        except Exception as e:
+            logger.error(f"DDG error ({source}): {e}")
 
         return results
 

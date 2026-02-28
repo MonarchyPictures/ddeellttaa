@@ -78,35 +78,35 @@ class SearchEngine:
             logger.info("✅ Cache hit")
             return cached
 
-        # Generate search plan (platforms ordered by priority)
+        # FAST: Try DDG first for quick results
+        raw_results = await self._fast_ddg_search(query, location)
+        
+        # Generate search plan for additional sources
         plan = self.query_engine.generate_search_plan(query, location)
-
-        # Sort platforms by priority from config
         sorted_platforms = sorted(
             plan.get("platforms", {}).keys(),
             key=lambda p: SCRAPER_PRIORITIES.get(p, 10),
             reverse=True
         )
-
         logger.info(f"📋 Platform order: {sorted_platforms}")
 
-        # Reorder plan platforms
-        ordered_platforms = {}
-        for p in sorted_platforms:
-            if p in plan["platforms"]:
-                ordered_platforms[p] = plan["platforms"][p]
-        plan["platforms"] = ordered_platforms
+        # Only run scrapers if we don't have enough results from DDG
+        if len(raw_results) < 5:
+            ordered_platforms = {}
+            for p in sorted_platforms:
+                if p in plan["platforms"]:
+                    ordered_platforms[p] = plan["platforms"][p]
+            plan["platforms"] = ordered_platforms
 
-        # Execute search with timeout protection
-        try:
-            raw_results = await asyncio.wait_for(
-                self.scraper.execute_search_plan(plan),
-                timeout=25  # Hard limit for search execution
-            )
-            logger.info(f"📊 Raw results: {len(raw_results)}")
-        except asyncio.TimeoutError:
-            logger.warning("⏰ Search timeout - returning partial results")
-            raw_results = []
+            try:
+                scraper_results = await asyncio.wait_for(
+                    self.scraper.execute_search_plan(plan),
+                    timeout=15
+                )
+                raw_results.extend(scraper_results)
+                logger.info(f"📊 Total raw results: {len(raw_results)}")
+            except asyncio.TimeoutError:
+                logger.warning("⏰ Scraper timeout - using DDG results only")
 
         # Classify
         leads = []
@@ -276,6 +276,61 @@ class SearchEngine:
         except Exception as e:
             logger.debug(f"High-intent DDG probe failed: {e}")
 
+        return leads
+
+    async def _fast_ddg_search(self, query: str, location: str) -> List[Dict[str, Any]]:
+        """
+        Fast DDG search that runs first to ensure we always get some results.
+        Runs in thread pool to not block.
+        """
+        if DDGS is None:
+            return []
+        
+        leads = []
+        seen = set()
+        
+        try:
+            loop = asyncio.get_event_loop()
+            
+            def do_ddg_search():
+                results = []
+                try:
+                    with DDGS() as ddgs:
+                        # Simple buyer-focused query
+                        ddg_query = f'"looking for" OR "want to buy" OR "natafuta" "{query}" "{location}"'
+                        rows = list(ddgs.text(ddg_query, region="ke-en", timelimit="m", max_results=10))
+                        
+                        for row in rows:
+                            url = row.get("href", "")
+                            if not url or url in seen:
+                                continue
+                            seen.add(url)
+                            text = f"{row.get('title', '')} {row.get('body', '')}".strip()
+                            results.append({
+                                "url": url,
+                                "source": "duckduckgo",
+                                "title": row.get("title", ""),
+                                "text": text,
+                                "body": row.get("body", ""),
+                                "location": location,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                            })
+                except Exception as e:
+                    logger.debug(f"Fast DDG search error: {e}")
+                return results
+            
+            # Run in thread with timeout
+            leads = await asyncio.wait_for(
+                loop.run_in_executor(None, do_ddg_search),
+                timeout=8
+            )
+            logger.info(f"Fast DDG: {len(leads)} results")
+            
+        except asyncio.TimeoutError:
+            logger.warning("Fast DDG search timed out")
+        except Exception as e:
+            logger.debug(f"Fast DDG search failed: {e}")
+        
         return leads
 
     async def search_with_telegram(self, query, location="Kenya",
