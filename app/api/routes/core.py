@@ -1,15 +1,16 @@
 # app/api/routes/core.py
 # ============================================================
-# CORE API ROUTES — Kenya High Recall Pipeline
-# VERSION: 2026-02-27-HIGH-RECALL-V2
-# CACHE_BUSTER: FORCE_REBUILD_20260227_001
+# CORE API ROUTES — Clean Single Pipeline
+# ============================================================
+# THE ONLY PIPELINE:
+# generate_high_recall_queries() → run_scrapers_parallel() 
+# → process_high_recall_results() → save_leads_to_db() → Return
 # ============================================================
 
-import logging
-import asyncio
-from fastapi import APIRouter, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
+import logging
 
 from app.services.kenya_high_recall_pipeline import (
     generate_high_recall_queries,
@@ -23,63 +24,63 @@ from app.config.runtime import DEFAULT_LOCATION, ALLOWED_LOCATIONS
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Startup verification log
-logger.info("✅ CORE ROUTES LOADED - HIGH RECALL PIPELINE V2")
-
 
 class SearchRequest(BaseModel):
     query: str
     location: Optional[str] = "Kenya"
-    include_all: Optional[bool] = False
-    include_telegram: Optional[bool] = True
-    telegram_hours_back: Optional[int] = 24
-    min_score: Optional[float] = 0.0
 
 
 def validate_location(location: str) -> str:
-    """
-    STRICT KENYA-ONLY VALIDATION.
-    Rejects any location that is not explicitly Kenya or a Kenyan city/region.
-    """
+    """Strict Kenya-only validation."""
     if not location:
         return DEFAULT_LOCATION
     
     loc_lower = location.lower().strip()
     
-    # Strict check: location MUST contain an allowed Kenya location
     if any(allowed in loc_lower for allowed in ALLOWED_LOCATIONS):
         return location
     
-    # If location is not Kenya-related, reject it
-    raise ValueError(f"Location '{location}' is not supported. This system only supports Kenya locations: {', '.join(ALLOWED_LOCATIONS[:10])}...")
+    raise ValueError(f"Location '{location}' is not supported. Kenya only.")
 
 
-async def run_high_recall_search(query: str, location: str) -> List[Dict[str, Any]]:
+@router.post("/search")
+async def search_post(payload: SearchRequest, background_tasks: BackgroundTasks):
     """
-    High recall search pipeline:
-    1. Generate multiple broad queries (product + location variants)
-    2. Run all scrapers in parallel for each query
-    3. Deduplicate by URL
-    4. Score and filter results
+    POST /api/search
     
-    This replaces the strict 'site:t.me + exact buyer phrase' approach
-    with broad queries scored by intent classification.
+    THE ONLY PIPELINE:
+    1. generate_high_recall_queries() → 10 query variants
+    2. run_scrapers_parallel() → 11 scrapers, max 3 concurrent
+    3. process_high_recall_results() → Score ≥0.25, top 20
+    4. save_leads_to_db() → Persist to database
+    5. Return leads
     """
-    logger.info(f"🔍 High Recall Search: '{query}' in '{location}'")
+    query = payload.query.strip()
     
-    # Step 1: Generate high recall queries
+    # Validate location
+    try:
+        location = validate_location(payload.location)
+    except ValueError as e:
+        return {
+            "results": [],
+            "leads": [],
+            "count": 0,
+            "status": "error",
+            "message": str(e)
+        }
+    
+    logger.info(f"🔍 Search: '{query}' in '{location}'")
+    
+    # Step 1: Generate queries
     queries = generate_high_recall_queries(query, location)
-    logger.info(f"Generated {len(queries)} high-recall queries: {queries}")
+    logger.info(f"Generated {len(queries)} queries")
     
-    # Step 2: Get all available scrapers
+    # Step 2: Run scrapers for each query
+    all_results = []
     scraper_instances = list(SCRAPER_REGISTRY.values())
-    logger.info(f"Using {len(scraper_instances)} scrapers: {list(SCRAPER_REGISTRY.keys())}")
+    logger.info(f"Using {len(scraper_instances)} scrapers")
     
-    all_raw_results = []
-    
-    # Step 3: Run each query through parallel scrapers
     for q in queries:
-        logger.info(f"Running query: '{q}'")
         try:
             results = await run_scrapers_parallel(
                 scrapers=scraper_instances,
@@ -87,238 +88,94 @@ async def run_high_recall_search(query: str, location: str) -> List[Dict[str, An
                 location=location,
                 hours=24
             )
-            logger.info(f"Query '{q}' returned {len(results)} results")
-            all_raw_results.extend(results)
+            all_results.extend(results)
+            logger.info(f"Query '{q[:30]}...' returned {len(results)} results")
         except Exception as e:
-            logger.error(f"Query '{q}' failed: {e}")
+            logger.error(f"Query failed: {e}")
             continue
     
-    logger.info(f"Total raw results before dedup: {len(all_raw_results)}")
+    logger.info(f"Total raw results: {len(all_results)}")
     
-    # Step 4: Deduplicate by URL
-    seen = set()
-    deduped = []
-    for r in all_raw_results:
-        url = r.get("url") or r.get("link") or r.get("source_url")
-        if url:
-            if url not in seen:
-                seen.add(url)
-                deduped.append(r)
-        else:
-            # Keep items without URL (might be valid)
-            deduped.append(r)
+    # Step 3: Score and filter
+    leads = process_high_recall_results(all_results)
+    logger.info(f"Processed {len(leads)} leads after scoring")
     
-    logger.info(f"Results after dedup: {len(deduped)}")
+    # Step 4: Save to DB (background)
+    if leads:
+        background_tasks.add_task(save_leads_to_db, leads, query)
+        logger.info(f"Queued {len(leads)} leads for DB save")
     
-    # Step 5: Process through high recall pipeline (score & filter)
-    leads = process_high_recall_results(deduped)
-    logger.info(f"Final leads after scoring: {len(leads)}")
-    
-    return leads
-
-
-@router.post("/search")
-async def search_post(request: SearchRequest, background_tasks: BackgroundTasks):
-    """
-    POST /api/search
-    Kenya High Recall Pipeline:
-    - Generates multiple broad queries (e.g., "tires Kenya", "tires Kenya price")
-    - Runs all scrapers in parallel
-    - Scores intent with 0.25 threshold (catches informal buyer language)
-    - Returns deduplicated, ranked leads
-    """
-    import os
-    import traceback
-    
-    logger.info("="*60)
-    logger.info("[BACKEND ROUTE] /api/search POST HIT")
-    logger.info(f"[BACKEND ROUTE] Request: {request.model_dump()}")
-    
-    query = request.query.strip()
-    
-    # Validate location - Kenya only
-    try:
-        location = validate_location(request.location)
-    except ValueError as e:
-        logger.warning(f"🚫 Kenya-Only Policy: {e}")
-        return {
-            "results": [], "leads": [],
-            "metrics": {"error": str(e), "kenya_only": True},
-            "message": str(e), "count": 0,
-            "status": "kenya_only_policy"
-        }
-
-    logger.info(f"🔍 Search: '{query}' in '{location}'")
-    
-    # ENV CHECK
-    logger.info(f"HIGH_RECALL_MODE: {os.getenv('HIGH_RECALL_MODE', 'NOT SET')}")
-    logger.info(f"SCRAPER_CONCURRENCY: {os.getenv('SCRAPER_CONCURRENCY', '3')}")
-
-    try:
-        # Use Kenya High Recall Pipeline
-        leads = await run_high_recall_search(query, location)
-        
-        logger.info(f"[BACKEND ROUTE] Result: {len(leads)} leads")
-        logger.info("="*60)
-
-        # Background Save
-        if leads:
-            background_tasks.add_task(save_leads_to_db, leads, query)
-
-        # DEBUG: Log final response size
-        print(f"[API RESPONSE DEBUG] Returning {len(leads)} leads to frontend for query '{query}'")
-        logger.info(f"[API RESPONSE DEBUG] Response payload size: {len(leads)} leads")
-        
-        return {
-            "results": leads,
-            "leads": leads,
-            "count": len(leads),
-            "status": "success" if leads else "no_results",
-            "message": f"Found {len(leads)} leads" if leads else "No leads found. Try different keywords.",
-            "query": query,
-            "location": location,
-            "mode": "high_recall_pipeline",
-            "debug_info": {
-                "scraper_count": len(SCRAPER_REGISTRY),
-                "scraper_names": list(SCRAPER_REGISTRY.keys())
-            }
-        }
-        
-    except Exception as e:
-        logger.error(f"[BACKEND ROUTE] ❌ ERROR: {e}")
-        logger.error(f"[BACKEND ROUTE] TRACEBACK: {traceback.format_exc()}")
-        return {
-            "results": [], "leads": [],
-            "metrics": {"error": str(e)},
-            "message": f"Search failed: {str(e)}",
-            "count": 0,
-            "status": "error"
-        }
+    # Step 5: Return
+    return {
+        "results": leads,
+        "leads": leads,
+        "count": len(leads),
+        "status": "success" if leads else "no_results",
+        "message": f"Found {len(leads)} leads" if leads else "No leads found",
+        "query": query,
+        "location": location
+    }
 
 
 @router.get("/search")
 async def search_get(
-    background_tasks: BackgroundTasks,
-    q: str = Query(None),
-    query: str = Query(None),
-    location: str = Query("Kenya"),
-    include_all: bool = Query(False),
-    include_telegram: bool = Query(True),
-    telegram_hours_back: int = Query(24),
-    min_score: float = Query(0.0)
+    q: Optional[str] = None,
+    query: Optional[str] = None,
+    location: Optional[str] = "Kenya"
 ):
-    """
-    GET /api/search?q=concrete+mixer&location=Nairobi
-    
-    Same as POST but via URL parameters.
-    Uses Kenya High Recall Pipeline.
-    """
+    """GET /api/search?q=pipes&location=Kenya"""
     search_query = q or query
     if not search_query:
         return {
-            "results": [], "leads": [],
-            "message": "No query provided", "count": 0,
-            "status": "no_query"
-        }
-
-    # Validate location - Kenya only
-    try:
-        location = validate_location(location)
-    except ValueError as e:
-        logger.warning(f"🚫 Kenya-Only Policy: {e}")
-        return {
-            "results": [], "leads": [],
-            "metrics": {"error": str(e), "kenya_only": True},
-            "message": str(e), "count": 0,
-            "status": "kenya_only_policy"
-        }
-
-    try:
-        # Use Kenya High Recall Pipeline
-        leads = await run_high_recall_search(search_query.strip(), location)
-
-        # Background Save
-        if leads:
-            background_tasks.add_task(save_leads_to_db, leads, search_query)
-
-        return {
-            "results": leads,
-            "leads": leads,
-            "count": len(leads),
-            "status": "success" if leads else "no_results",
-            "message": f"Found {len(leads)} leads" if leads else "No leads found. Try different keywords.",
-            "query": search_query,
-            "location": location,
-            "mode": "high_recall_pipeline"
-        }
-        
-    except Exception as e:
-        logger.error(f"[BACKEND ROUTE] ❌ ERROR: {e}")
-        return {
-            "results": [], "leads": [],
-            "metrics": {"error": str(e)},
-            "message": f"Search failed: {str(e)}",
+            "results": [],
+            "leads": [],
             "count": 0,
-            "status": "error"
+            "status": "error",
+            "message": "No query provided"
         }
+    
+    # Reuse POST logic via SearchRequest
+    from fastapi import Request
+    return await search_post(
+        SearchRequest(query=search_query, location=location),
+        BackgroundTasks()
+    )
 
 
 @router.get("/categories")
 async def get_categories():
-    """
-    GET /api/categories
-    Returns supported product categories and their keywords.
-    """
-    # Simplified categories without old engine dependency
-    categories = {
-        "general": {
-            "keywords": ["buy", "looking for", "need", "want", "searching"],
-            "platforms": ["telegram", "facebook", "twitter"],
-            "example_phrases": ["I'm looking for", "I need", "Where can I find"]
-        },
-        "vehicles": {
-            "keywords": ["car", "toyota", "nissan", "vehicle", "truck"],
-            "platforms": ["facebook", "jiji"],
-            "example_phrases": ["Looking for a car", "I want to buy a", "Need a vehicle"]
-        },
-        "electronics": {
-            "keywords": ["phone", "laptop", "iphone", "samsung", "computer"],
-            "platforms": ["telegram", "facebook", "jiji"],
-            "example_phrases": ["I need an iPhone", "Looking for a laptop", "Buy phone"]
-        },
-        "property": {
-            "keywords": ["house", "apartment", "rent", "land", "office"],
-            "platforms": ["facebook", "jiji"],
-            "example_phrases": ["Looking for a house", "Need an apartment", "Land for sale"]
+    """Return supported categories."""
+    return {
+        "categories": {
+            "general": {"keywords": ["buy", "looking for", "need"]},
+            "vehicles": {"keywords": ["car", "toyota", "vehicle"]},
+            "electronics": {"keywords": ["phone", "laptop", "iphone"]},
+            "property": {"keywords": ["house", "apartment", "rent"]}
         }
     }
-    
-    return {"categories": categories}
 
 
 @router.get("/success/stats")
 async def get_stats():
     """Dashboard statistics."""
     from app.db.database import SessionLocal
+    from app.db import models
+    from datetime import datetime, timedelta
     
+    db = SessionLocal()
     try:
-        from app.db import models
-        from datetime import datetime, timedelta
-        
-        db = SessionLocal()
-        try:
-            total = db.query(models.Lead).count()
-            hot = db.query(models.Lead).filter(models.Lead.is_hot_lead == 1).count()
-            today = db.query(models.Lead).filter(
-                models.Lead.created_at >= datetime.now() - timedelta(hours=24)
-            ).count()
-            return {
-                "total_leads": total,
-                "hot_leads": hot,
-                "today_leads": today,
-                "status": "ok"
-            }
-        finally:
-            db.close()
+        total = db.query(models.Lead).count()
+        hot = db.query(models.Lead).filter(models.Lead.is_hot_lead == True).count()
+        today = db.query(models.Lead).filter(
+            models.Lead.created_at >= datetime.utcnow() - timedelta(hours=24)
+        ).count()
+        return {
+            "total_leads": total,
+            "hot_leads": hot,
+            "today_leads": today,
+            "status": "ok"
+        }
     except Exception as e:
         return {"total_leads": 0, "hot_leads": 0, "today_leads": 0, "status": "error"}
+    finally:
+        db.close()
