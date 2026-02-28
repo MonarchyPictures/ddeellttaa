@@ -208,7 +208,7 @@ class LeadValidator:
             "comparison_indicator": comparison,
             "upcoming_deadline": deadline.isoformat() if deadline else None,
             "availability_status": "active" if budget_ready else "pending",
-            "competition_count": self._estimate_competition(text),
+            "competition_count": self._calculate_competition(text, raw_data.get("source", "Unknown"), intent_score),
             "is_unique_request": True, # Should be calculated via dedupe
             "optimal_response_window": self._calculate_response_window(urgency),
             "peak_response_time": datetime.now(timezone.utc).strftime("%H:%M"),

@@ -282,12 +282,25 @@ def scrape_platform_task(platform: str, query: str, location: str = "Kenya",
     # Scrape using registry
     raw_results = []
     try:
-        scraper = SCRAPER_REGISTRY.get(platform.lower())
+        # Platform name mapping (Agent names -> Registry names)
+        PLATFORM_ALIASES = {
+            "google": "serpapi",      # Use SerpAPI for Google searches
+            "tiktok": "twitter",      # Fallback to Twitter for TikTok (similar social)
+            "reddit": "twitter",      # Fallback to Twitter for Reddit (similar forum)
+            "facebook": "facebook_groups",  # Map to registered name
+        }
+        
+        platform_key = platform.lower()
+        # Check for alias first, then use original
+        lookup_key = PLATFORM_ALIASES.get(platform_key, platform_key)
+        
+        scraper = SCRAPER_REGISTRY.get(lookup_key)
         if scraper:
-            logger.info(f"Using scraper '{platform}' for query '{query}'")
+            logger.info(f"Using scraper '{lookup_key}' (requested: '{platform}') for query '{query}'")
             raw_results = scraper.scrape(query, time_window_hours=24)
         else:
-            logger.warning(f"No scraper found for platform: {platform}")
+            logger.warning(f"No scraper found for platform: {platform} (looked up: {lookup_key})")
+            logger.warning(f"Available scrapers: {list(SCRAPER_REGISTRY.keys())}")
     except Exception as e:
         logger.error(f"Scraper failed for {platform}: {e}")
     
