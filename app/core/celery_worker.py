@@ -549,7 +549,16 @@ def run_agent_task(agent_id: str, sync: bool = False):
         logger.info(f"EXECUTING Agent Flow for '{agent.name}' (ID: {agent.id})")
         logger.info(f"Mode: {'SYNC' if sync else 'ASYNC'}")
         
-        platforms = ["google", "facebook", "reddit", "tiktok", "twitter"]
+        # Get platforms dynamically from registry
+        from app.core.agent_scraper_resolver import get_available_scrapers
+        requested_platforms = getattr(agent, "platforms", None)
+        platforms = get_available_scrapers(requested_platforms)
+        
+        if not platforms:
+            logger.error(f"No available scrapers for agent {agent_id}")
+            return f"Error: No scrapers available"
+        
+        logger.info(f"✅ Using platforms: {platforms}")
         results = []
         
         for platform in platforms:
