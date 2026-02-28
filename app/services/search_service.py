@@ -26,6 +26,11 @@ from app.config.runtime import (
 )
 from app.services.intent_engine import calculate_intent_score
 from app.services.market_classifier import classify_market_side, is_valid_buyer
+from app.services.kenya_high_recall_pipeline import (
+    calculate_kenyan_intent_score,
+    generate_high_recall_queries,
+    process_high_recall_results
+)
 from app.services.urgency_ranker import calculate_urgency_score
 from app.services.persona_detector import detect_persona
 from app.services.confidence_engine import calculate_confidence
@@ -242,13 +247,7 @@ async def search(query: str, location: str):
     SerpAPI â†’ Google CSE â†’ Telegram â†’ Facebook â†’ Forums â†’ ... â†’ DuckDuckGo
     """
 
-    import os, traceback
-    print("🚀 Starting search:", query)
-    print("📍 Location:", location)
-    print("🔑 SERPAPI:", bool(os.getenv("SERPAPI_API_KEY")))
-    print("🔑 HIGH_RECALL_MODE:", os.getenv("HIGH_RECALL_MODE", "not set"))
-    try:
-        # â”€â”€ VALIDATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # â”€â”€ VALIDATION â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     is_valid, error = VALIDATION_SERVICE.validate_search_request(query, location)
     if not is_valid:
         logger.warning(f"ðŸš« Validation Failed: {error}")
@@ -384,64 +383,63 @@ async def search(query: str, location: str):
             raw_results.append(r)
 
     logger.info(f"ðŸ“Š Total raw results: {len(raw_results)}")
+    print("RAW_RESULTS:", len(raw_results))
+
+    # HIGH RECALL MODE: Use new Kenya scoring pipeline
+    if HIGH_RECALL_MODE:
+        logger.info("Using Kenya High Recall Pipeline")
+        print("USING_KENYA_HIGH_RECALL_PIPELINE")
+        processed_leads = process_high_recall_results(raw_results)
+        metrics["total_processed"] = len(processed_leads)
+        print("AFTER_CLASSIFIER:", len(processed_leads))
+        print("FINAL_LEADS:", len(processed_leads))
+    else:
+        # Standard processing path
 
     # â”€â”€ PROCESS RESULTS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    processed_leads = []
-    seen_urls = set()
-    seen_text_hashes = set()
-    rejected_count = 0
-    print(f"PROCESSING {len(raw_results)} raw results")
+            processed_leads = []
+            seen_urls = set()
+            seen_text_hashes = set()
 
-    for r in raw_results:
-        url = r.get("url") or r.get("link") or ""
+            for r in raw_results:
+                url = r.get("url") or r.get("link") or ""
 
         # URL dedup
-        if url in seen_urls:
-            continue
-        seen_urls.add(url)
+                if url in seen_urls:
+                    continue
+                seen_urls.add(url)
 
         # Text dedup (fuzzy â€” first 100 chars)
-        text = r.get("text") or r.get("title") or ""
-        text_hash = hashlib.md5(text.lower().strip()[:100].encode()).hexdigest()
-        if text_hash in seen_text_hashes:
-            continue
-        seen_text_hashes.add(text_hash)
+                text = r.get("text") or r.get("title") or ""
+                text_hash = hashlib.md5(text.lower().strip()[:100].encode()).hexdigest()
+                if text_hash in seen_text_hashes:
+                    continue
+                seen_text_hashes.add(text_hash)
 
         # Process
-        try:
+                try:
             # Align with engine behavior: classifier-first buyer gate + market validator.
-            source = r.get("source") or "Unknown"
-            signal = BUYER_CLASSIFIER.classify(text, source)
-            if not signal.is_buyer:
-                rejected_count += 1
-                print(f"REJECTED: not buyer - {text[:50]}...")
-                continue
-            if signal.confidence < CONFIDENCE_FLOOR:
-                rejected_count += 1
-                print(f"REJECTED: low confidence {signal.confidence}")
-                continue
-            if not is_valid_buyer(text, url):
-                rejected_count += 1
-                print(f"REJECTED: market classifier")
-                continue
-            if not SEARCH_ENGINE._passes_precision_filter(r, signal, query):
-                rejected_count += 1
-                print(f"REJECTED: precision filter")
-                continue
+                    source = r.get("source") or "Unknown"
+                    signal = BUYER_CLASSIFIER.classify(text, source)
+                    if not signal.is_buyer:
+                        continue
+                    if signal.confidence < CONFIDENCE_FLOOR:
+                        continue
+                    if not is_valid_buyer(text, url):
+                        continue
+                    if not SEARCH_ENGINE._passes_precision_filter(r, signal, query):
+                        continue
 
-            lead = SEARCH_ENGINE._build_lead(r, signal, query)
-            if lead:
-                lead["market_side"] = "demand"
-                lead["intent_type"] = "BUYER"
+                    lead = SEARCH_ENGINE._build_lead(r, signal, query)
+                    if lead:
+                        lead["market_side"] = "demand"
+                        lead["intent_type"] = "BUYER"
                 # Only filter if confidence is below the VERY low floor
-                if lead.get("confidence", 0) >= CONFIDENCE_FLOOR:
-                    processed_leads.append(lead)
-                    metrics["total_processed"] += 1
-        except Exception as e:
-            logger.error(f"Processing error: {e}")
-
-    print("AFTER CLASSIFIER:", len(processed_leads))
-    print("FINAL LEADS:", len(processed_leads))
+                        if lead.get("confidence", 0) >= CONFIDENCE_FLOOR:
+                            processed_leads.append(lead)
+                            metrics["total_processed"] += 1
+                except Exception as e:
+                    logger.error(f"Processing error: {e}")
 
     # â”€â”€ SORT BY RANKED SCORE (Source quality matters) â”€â”€
     processed_leads.sort(
