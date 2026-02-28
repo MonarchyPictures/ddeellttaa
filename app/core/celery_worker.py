@@ -3,11 +3,12 @@ Celery Worker Tasks - Production Only
 
 Pure Celery tasks. No SQLite fallback. No sync execution.
 Redis is REQUIRED.
+
+PHASE 3 CLEAN: Simple agent execution using high-recall pipeline only.
 """
 import os
 import sys
 import logging
-import hashlib
 import uuid
 import asyncio
 from datetime import datetime, timedelta, timezone
@@ -25,6 +26,10 @@ from app.services.agent_scheduler import (
     should_execute_agent
 )
 from app.services.parallel_scraper_runner import run_scrapers_parallel
+from app.services.kenya_high_recall_pipeline import (
+    generate_high_recall_queries,
+    process_high_recall_results
+)
 from app.scrapers.registry import SCRAPER_REGISTRY
 from app.core.cache import get_cached, set_cached
 
@@ -120,12 +125,12 @@ def specialops_mission_task(query: str, location: str = "Kenya", agent_id: str =
                     title=text[:200],
                     product_category="general",
                     buyer_name="Anonymous",
+                    contact_phone=phone,
+                    contact_flag="ok" if phone else "missing",
                     intent_score=intent_score,
                     confidence_score=round(intent_score * 100, 2),
                     badge=badge,
                     is_hot_lead=1 if intent_score > 0.8 else 0,
-                    contact_phone=phone,
-                    contact_flag="ok" if phone else "missing",
                     status=models.CRMStatus.NEW,
                     created_at=datetime.now(timezone.utc)
                 )
@@ -252,152 +257,23 @@ def run_all_agents():
         db.close()
 
 
-@celery.task(name="scrape_platform_task")
-def scrape_platform_task(platform: str, query: str, location: str = "Kenya", 
-                         agent_id: str = None, radius: int = 50, 
-                         min_intent: float = 0.25, tier: int = 2, timeout: int = 15):
-    """Background task to scrape a platform and save leads.
-    
-    SIMPLIFIED PIPELINE: Scraper → Score → Save Lead
-    No LeadValidator, no AgentRawLead, no complex ranking engines.
-    """
-    from app.scrapers.registry import SCRAPER_REGISTRY
-    from app.services.kenya_high_recall_pipeline import calculate_kenyan_intent_score
-    
-    # Scrape using registry
-    raw_results = []
-    try:
-        PLATFORM_ALIASES = {
-            "google": "serpapi",
-            "tiktok": "twitter",
-            "reddit": "twitter",
-            "facebook": "facebook_groups",
-        }
-        
-        platform_key = platform.lower()
-        lookup_key = PLATFORM_ALIASES.get(platform_key, platform_key)
-        
-        scraper = SCRAPER_REGISTRY.get(lookup_key)
-        if scraper:
-            logger.info(f"Using scraper '{lookup_key}' (requested: '{platform}') for query '{query}'")
-            raw_results = scraper.scrape(query, time_window_hours=24)
-        else:
-            logger.warning(f"No scraper found for platform: {platform} (looked up: {lookup_key})")
-    except Exception as e:
-        logger.error(f"Scraper failed for {platform}: {e}")
-    
-    db = SessionLocal()
-    processed_count = 0
-    
-    try:
-        agent = None
-        if agent_id:
-            if isinstance(agent_id, str):
-                agent_id = uuid.UUID(agent_id)
-            agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
-
-        # Get recent leads for deduplication
-        recent_leads = db.query(models.Lead).filter(
-            models.Lead.created_at >= datetime.now() - timedelta(hours=24)
-        ).all()
-        recent_urls = {l.source_url for l in recent_leads if l.source_url}
-        recent_texts = {l.buyer_request_snippet[:100] for l in recent_leads if l.buyer_request_snippet}
-
-        for raw in raw_results:
-            try:
-                # Extract text and URL
-                text = raw.get("body") or raw.get("text") or raw.get("snippet", "")
-                url = raw.get("href") or raw.get("url") or raw.get("source_url", "")
-                
-                if not text or not url:
-                    continue
-                
-                # SIMPLE PIPELINE: Score directly
-                intent_score = calculate_kenyan_intent_score(text)
-                
-                # Threshold check
-                if intent_score < min_intent:
-                    continue
-                
-                # Determine badge
-                if intent_score >= 0.7:
-                    badge = "HOT"
-                elif intent_score >= 0.5:
-                    badge = "WARM"
-                else:
-                    badge = "COLD"
-                
-                # Deduplication checks
-                if url in recent_urls:
-                    continue
-                if text[:100] in recent_texts:
-                    continue
-                
-                # Extract phone
-                import re
-                phone_match = re.search(r'(\+?254\d{9}|0\d{9})', text)
-                phone = phone_match.group(0) if phone_match else None
-                
-                # Create lead directly
-                lead = models.Lead(
-                    id=uuid.uuid4(),
-                    agent_id=agent.id if agent else None,
-                    source_platform=raw.get("source", platform.capitalize()),
-                    source_url=url,
-                    title=text[:200],
-                    buyer_request_snippet=text[:500],
-                    product_category="general",
-                    buyer_name="Anonymous",
-                    contact_phone=phone,
-                    contact_flag="ok" if phone else "missing",
-                    intent_score=intent_score,
-                    confidence_score=round(intent_score * 100, 2),
-                    ranked_score=round(intent_score, 2),
-                    badge=badge,
-                    is_hot_lead=1 if intent_score > 0.8 else 0,
-                    status=models.CRMStatus.NEW,
-                    created_at=datetime.now(timezone.utc)
-                )
-                
-                db.add(lead)
-                recent_urls.add(url)
-                recent_texts.add(text[:100])
-                processed_count += 1
-                
-                # Create agent-lead link if applicable
-                if agent:
-                    agent_lead = models.AgentLead(
-                        agent_id=agent.id,
-                        lead_id=lead.id
-                    )
-                    db.add(agent_lead)
-                    
-            except Exception as e:
-                logger.error(f"Error processing lead from {platform}: {e}")
-                continue
-
-        db.commit()
-        logger.info(f"Processed {processed_count} leads from {platform}")
-        
-    except Exception as e:
-        db.rollback()
-        logger.error(f"Error saving leads from {platform}: {e}")
-        return f"Error saving leads: {e}"
-    finally:
-        db.close()
-        
-    return f"Processed {processed_count} leads from {platform} in {location}"
+def calculate_next_run(agent):
+    """Calculate next run time based on interval."""
+    from datetime import timedelta
+    return agent.last_run + timedelta(hours=agent.interval_hours)
 
 
 @celery.task(name="run_agent_task")
 def run_agent_task(agent_id: str):
     """
-    Run discovery for a single agent with parallel scraping.
-    Uses scheduler for reliable execution tracking.
+    SIMPLIFIED AGENT EXECUTION
+    Pipeline: Generate Queries → Run Scrapers → Score → Save Leads
+    
+    No LeadValidator.
+    No AgentRawLead.
+    No platform-specific celery calls.
     """
     db = SessionLocal()
-    success = False
-    error_msg = None
     
     try:
         if isinstance(agent_id, str):
@@ -410,78 +286,98 @@ def run_agent_task(agent_id: str):
         
         logger.info(f"EXECUTING Agent '{agent.name}' (ID: {agent.id})")
         
-        # Check cache first
-        cached_results = get_cached(agent.query, agent.location or "Kenya")
-        if cached_results:
-            logger.info(f"⚡ Cache HIT for agent '{agent.name}' query '{agent.query}'")
-            # Still process cached results through ingestion
-            if cached_results:
-                ingest_leads_task.delay(cached_results)
-            success = True
-            return f"Agent {agent.name}: {len(cached_results)} cached results (skipped scraping)"
+        # Step 1: Generate high-recall queries
+        queries = generate_high_recall_queries(agent.query, agent.location or "Kenya")
+        logger.info(f"Agent {agent_id}: Generated {len(queries)} queries")
         
-        # Get platforms from registry
-        from app.core.agent_scraper_resolver import get_available_scrapers
-        requested_platforms = getattr(agent, "platforms", None)
-        platform_names = get_available_scrapers(requested_platforms)
+        # Step 2: Get all scraper instances
+        scraper_instances = list(SCRAPER_REGISTRY.values())
+        logger.info(f"Agent {agent_id}: Using {len(scraper_instances)} scrapers")
         
-        if not platform_names:
-            error_msg = "No scrapers available"
-            logger.error(f"Agent {agent_id}: {error_msg}")
-            return f"Error: {error_msg}"
-        
-        logger.info(f"Agent {agent_id}: Using platforms {platform_names}")
-        
-        # Build scraper instances
-        scraper_instances = []
-        for platform in platform_names:
-            if platform in SCRAPER_REGISTRY:
-                scraper_instances.append(SCRAPER_REGISTRY[platform])
-            else:
-                logger.warning(f"Platform '{platform}' not in registry")
-        
-        if not scraper_instances:
-            error_msg = "No scraper instances available"
-            logger.error(f"Agent {agent_id}: {error_msg}")
-            return f"Error: {error_msg}"
-        
-        # Run scrapers in parallel with controlled concurrency
-        try:
-            logger.info(f"Agent {agent_id}: Running {len(scraper_instances)} scrapers in parallel")
-            
-            # Use asyncio.run() - safe in Celery worker (sync context)
-            raw_results = asyncio.run(
-                run_scrapers_parallel(
-                    scrapers=scraper_instances,
-                    query=agent.query,
-                    location=agent.location or "Kenya"
+        # Step 3: Run scrapers for each query
+        all_raw_results = []
+        for q in queries:
+            try:
+                results = asyncio.run(
+                    run_scrapers_parallel(scraper_instances, q, agent.location or "Kenya", 24)
                 )
-            )
+                all_raw_results.extend(results)
+                logger.info(f"Agent {agent_id}: Query '{q}' returned {len(results)} results")
+            except Exception as e:
+                logger.error(f"Agent {agent_id}: Query '{q}' failed: {e}")
+                continue
+        
+        logger.info(f"Agent {agent_id}: Total raw results: {len(all_raw_results)}")
+        
+        # Step 4: Score and filter results
+        leads = process_high_recall_results(all_raw_results)
+        logger.info(f"Agent {agent_id}: Processed {len(leads)} leads after scoring")
+        
+        # Step 5: Save leads to DB
+        if leads:
+            for lead_data in leads:
+                try:
+                    # Check for existing URL
+                    existing = db.query(models.Lead).filter(
+                        models.Lead.source_url == lead_data.get("url")
+                    ).first()
+                    
+                    if existing:
+                        # Update if better score
+                        if lead_data.get("intent_score", 0) > existing.intent_score:
+                            existing.intent_score = lead_data.get("intent_score")
+                            existing.ranked_score = lead_data.get("intent_score")
+                            logger.info(f"Updated existing lead with better score")
+                        continue
+                    
+                    # Create new lead
+                    lead = models.Lead(
+                        id=lead_data.get("id", uuid.uuid4()),
+                        agent_id=agent.id,
+                        source_platform=lead_data.get("source", "unknown"),
+                        source_url=lead_data.get("url"),
+                        title=lead_data.get("title", ""),
+                        buyer_request_snippet=lead_data.get("snippet", ""),
+                        product_category=lead_data.get("product_category", "general"),
+                        buyer_name=lead_data.get("buyer_name", "Anonymous"),
+                        contact_phone=lead_data.get("contact_phone"),
+                        intent_score=lead_data.get("intent_score", 0),
+                        confidence_score=lead_data.get("confidence", 0),
+                        ranked_score=lead_data.get("intent_score", 0),
+                        badge=lead_data.get("badge", "COLD"),
+                        is_hot_lead=1 if lead_data.get("badge") == "HOT" else 0,
+                        status=models.CRMStatus.NEW,
+                        created_at=datetime.now(timezone.utc)
+                    )
+                    db.add(lead)
+                    
+                    # Create agent-lead link
+                    agent_lead = models.AgentLead(
+                        agent_id=agent.id,
+                        lead_id=lead.id
+                    )
+                    db.add(agent_lead)
+                    
+                except Exception as e:
+                    logger.error(f"Error saving lead: {e}")
+                    continue
             
-            logger.info(f"Agent {agent_id}: Scraping complete. {len(raw_results)} total results")
-            
-            # Cache results for future queries
-            if raw_results:
-                set_cached(agent.query, raw_results, agent.location or "Kenya")
-                # Queue leads for ingestion
-                ingest_leads_task.delay(raw_results)
-            
-            success = True
-            return f"Agent {agent.name}: {len(raw_results)} results from {len(scraper_instances)} platforms"
-            
-        except Exception as scrape_e:
-            error_msg = f"Scraping failed: {str(scrape_e)}"
-            logger.error(f"Agent {agent_id}: {error_msg}")
-            return f"Error: {error_msg}"
-            
+            db.commit()
+            logger.info(f"Agent {agent_id}: Saved {len(leads)} leads to database")
+        
+        # Step 6: Update agent schedule
+        agent.last_run = datetime.utcnow()
+        agent.next_run = calculate_next_run(agent)
+        db.commit()
+        
+        success = True
+        return f"Agent {agent.name}: Processed {len(leads)} leads"
+        
     except Exception as e:
-        error_msg = str(e)
         logger.error(f"CRITICAL: Agent {agent_id} execution failed: {e}")
         db.rollback()
-        return f"Error: {error_msg}"
+        return f"Error: {e}"
     finally:
-        # Mark execution complete in scheduler (updates next_run_at)
-        complete_agent_execution(db, str(agent_id), success=success, error_message=error_msg)
         db.close()
 
 
@@ -524,7 +420,6 @@ __all__ = [
     'specialops_mission_task',
     'scrape_source_task',
     'run_all_agents',
-    'scrape_platform_task',
     'run_agent_task',
     'cleanup_old_leads',
     'update_lead_availability',
