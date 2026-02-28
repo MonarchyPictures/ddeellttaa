@@ -1,9 +1,10 @@
-# DEBUG BUILD: 2026-02-27T20:20:00Z
+# DEBUG BUILD: 2026-02-27T23:59:00Z - CACHE_BUSTER_V3
 import logging
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger("delta9")
 _logger.info("="*60)
-_logger.info("MAIN.PY LOADED - VERSION 2026-02-27-DEBUG-V2")
+_logger.info("MAIN.PY LOADED - VERSION 2026-02-27-HIGH-RECALL-V3")
+_logger.info("RAILWAY DEPLOY: Cache cleared, all scrapers enabled")
 _logger.info("="*60)
 
 import os
