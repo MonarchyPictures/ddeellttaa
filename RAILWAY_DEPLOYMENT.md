@@ -1,151 +1,297 @@
 # Railway Production Deployment Guide
 
-## Architecture
+## Quick Start (Automated)
 
-This application runs as **4 separate services** in Railway:
+```bash
+# Make script executable
+chmod +x railway-setup.sh
 
-1. **API Service** - FastAPI web server
-2. **Worker Service** - Celery worker for background tasks
-3. **Beat Service** - Celery beat for scheduled tasks
-4. **Redis** - Message broker (Railway Redis plugin)
+# Run setup script
+./railway-setup.sh
+```
 
-## Required Services Configuration
+## Manual Setup (Step-by-Step)
 
-### 1. API Service
-- **Builder**: Nixpacks
-- **Start Command**: `python -m app.main`
-- **Port**: `8000`
-- **Health Check Path**: `/health` (or root `/`)
+### Prerequisites
 
-### 2. Worker Service
-- **Builder**: Nixpacks (same codebase)
-- **Start Command**: `celery -A app.core.celery_app.celery worker --loglevel=info`
-- **Port**: None (background worker)
+- Railway CLI installed: `npm install -g @railway/cli`
+- Logged in: `railway login`
+- Project created at https://railway.app
 
-### 3. Beat Service
-- **Builder**: Nixpacks (same codebase)
-- **Start Command**: `celery -A app.core.celery_app.celery beat --loglevel=info`
-- **Port**: None (scheduler only)
+---
 
-### 4. Redis Plugin
-- Add the **Redis** plugin from Railway marketplace
-- This automatically sets `REDIS_URL` environment variable
+## Step 1: Create Redis Plugin
 
-## Required Environment Variables
+```bash
+railway add --plugin redis
+```
 
-| Variable | Source | Description |
-|----------|--------|-------------|
-| `DATABASE_URL` | Postgres plugin | PostgreSQL connection string |
-| `REDIS_URL` | Redis plugin | Redis connection string |
-| `HIGH_RECALL_MODE` | Set manually | Set to `true` for Kenya pipeline |
-| `SERPAPI_API_KEY` | Set manually | For Google search API |
+This automatically creates:
+- Redis instance
+- `REDIS_URL` environment variable (available to all services)
 
-## Code Changes Summary
+---
 
-### 1. Celery Configuration (`app/core/celery_app.py`)
-- **REMOVED**: SQLite fallback broker
-- **REMOVED**: Localhost Redis fallback
-- **REMOVED**: Fallback manager and `send_task()` function
-- **ADDED**: Hard requirement for `REDIS_URL` - fails loudly if missing
+## Step 2: Create PostgreSQL Database
 
-### 2. Celery Worker (`app/core/celery_worker.py`)
-- **REMOVED**: All `fallback_manager.register_task()` calls
-- **REMOVED**: Sync execution option (`sync=True` parameter)
-- **REMOVED**: Direct execution fallbacks
-- **CHANGED**: `run_agent_task()` now uses `.delay()` for all platform scrapes
-- **CHANGED**: `run_all_agents()` now uses `.delay()` instead of `send_task()`
+```bash
+railway add --plugin postgres
+```
 
-### 3. API Routes (`app/api/routes/agents.py`)
-- **REMOVED**: `/agents/{agent_id}/run-sync` endpoint (no sync execution)
-- **REMOVED**: `send_task()` usage
-- **CHANGED**: `create_agent()` now uses `run_agent_task.delay()`
-- **CHANGED**: `run_agent_now()` now uses `run_agent_task.delay()`
+This automatically creates:
+- PostgreSQL database
+- `DATABASE_URL` environment variable (available to all services)
 
-### 4. Search Service (`app/services/search_service.py`)
-- **REMOVED**: `ENABLE_CELERY` flag
-- **REMOVED**: `send_task("ingest_leads_task", ...)` usage
-- **CHANGED**: Now uses `ingest_leads_task.delay()` directly
+---
 
-### 5. Database (`app/db/database.py`)
-- **REMOVED**: Default SQLite fallback
-- **ADDED**: Hard requirement for `DATABASE_URL` - fails loudly if missing
+## Step 3: Create Services
 
-## Deployment Steps
+Create 3 services from the same GitHub repo:
 
-1. **Push code to GitHub**
-   ```bash
-   git add .
-   git commit -m "Clean Railway production setup - Redis required, no fallbacks"
-   git push
-   ```
+```bash
+# API Service
+railway service create delta9-api
 
-2. **Create services in Railway** (use same GitHub repo for all 3):
-   - Create "delta9-api" service with start command `python -m app.main`
-   - Create "delta9-worker" service with start command `celery -A app.core.celery_app.celery worker --loglevel=info`
-   - Create "delta9-beat" service with start command `celery -A app.core.celery_app.celery beat --loglevel=info`
+# Worker Service
+railway service create delta9-worker
 
-3. **Add Redis plugin** (creates one Redis instance, shared by all services)
+# Beat Service
+railway service create delta9-beat
+```
 
-4. **Add Postgres plugin** (if not already present)
+---
 
-5. **Set environment variables**:
-   - `HIGH_RECALL_MODE=true`
-   - `SERPAPI_API_KEY=your_key_here`
+## Step 4: Configure Start Commands
 
-6. **Deploy all services**
+In Railway dashboard (https://railway.app/dashboard):
+
+### API Service (`delta9-api`)
+```
+Start Command: python -m app.main
+Port: 8000
+```
+
+### Worker Service (`delta9-worker`)
+```
+Start Command: celery -A app.core.celery_app.celery worker --loglevel=info
+```
+
+### Beat Service (`delta9-beat`)
+```
+Start Command: celery -A app.core.celery_app.celery beat --loglevel=info
+```
+
+---
+
+## Step 5: Set Environment Variables
+
+Set these for **all services**:
+
+```bash
+railway variables set HIGH_RECALL_MODE=true
+railway variables set SCRAPER_CONCURRENCY=3
+railway variables set CACHE_TTL_SECONDS=600
+railway variables set SCRAPER_TIMEOUT_SECONDS=25
+railway variables set TOTAL_PHASE_TIMEOUT_SECONDS=60
+railway variables set SERPAPI_API_KEY=your_key_here
+```
+
+Or via Railway dashboard:
+- Go to each service → Variables tab
+- Add variables (they inherit from project level)
+
+---
+
+## Step 6: Connect Services to Plugins
+
+In Railway dashboard:
+
+1. Go to each service (API, Worker, Beat)
+2. Click "Settings" → "Service Connections"
+3. Connect to:
+   - Redis plugin
+   - PostgreSQL plugin
+
+This ensures `REDIS_URL` and `DATABASE_URL` are available.
+
+---
+
+## Step 7: Deploy
+
+```bash
+railway up
+```
+
+Or deploy via Railway dashboard:
+- Click "Deploy" on each service
+
+---
 
 ## Verification
 
-Check logs for these messages:
-
-**API Service**:
-```
-MAIN.PY LOADED
-Uvicorn running on http://0.0.0.0:8000
+### Check API is running
+```bash
+curl https://your-app.railway.app/health
+curl https://your-app.railway.app/api/agents/
 ```
 
-**Worker Service**:
+### Check Worker logs
+```bash
+railway logs --service delta9-worker
+```
+
+Expected output:
 ```
 Connected to redis://...
 celery@... ready
+Task app.core.celery_worker.run_agent_task[...] succeeded
 ```
 
-**Beat Service**:
+### Check Beat logs
+```bash
+railway logs --service delta9-beat
+```
+
+Expected output:
 ```
 beat: Starting...
 beat: Acquired lock
 ```
 
+### Check Redis connection
+```bash
+railway logs --service delta9-api
+```
+
+Look for:
+```
+Redis cache connected. TTL: 600s
+```
+
+---
+
 ## Troubleshooting
 
 ### "REDIS_URL is not set"
-- Make sure Redis plugin is added and deployed
-- Check that all services have access to the Redis plugin
+```bash
+# Check Redis plugin is connected
+railway status
+
+# Check environment variables
+railway variables
+```
 
 ### "DATABASE_URL is not set"
-- Make sure Postgres plugin is added and deployed
-- Check that all services have access to the Postgres plugin
-
-### Railway serving old code
-Railway caches aggressively. To force a rebuild:
-1. Change the timestamp in `railway.toml` (line: `# Cache buster: 2026-02-27T...`)
-2. Push to git
-3. Trigger "Redeploy" in Railway UI (select "Clear build cache")
+```bash
+# Check PostgreSQL plugin is connected
+railway status
+```
 
 ### Worker not processing tasks
-- Check Worker service logs for connection errors
-- Verify `REDIS_URL` is accessible from Worker service
-- Check that tasks are being queued: look for "Queued X leads" in API logs
+```bash
+# Check Worker logs
+railway logs --service delta9-worker --follow
+
+# Verify Redis connection
+# Should show: Connected to redis://...
+```
+
+### "Module not found"
+```bash
+# Rebuild and redeploy
+railway up --build
+```
+
+### Railway serving old code
+```bash
+# Force rebuild
+railway up --build
+
+# Or in dashboard: "Redeploy" with "Clear build cache"
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   API       │────▶│   Worker    │────▶│    Redis    │
+│  (FastAPI)  │     │  (Celery)   │     │  (Broker)   │
+└─────────────┘     └─────────────┘     └─────────────┘
+                           │                    │
+                           ▼                    ▼
+                    ┌─────────────┐      ┌─────────────┐
+                    │    Beat     │      │    Cache    │
+                    │  (Scheduler)│      │             │
+                    └─────────────┘      └─────────────┘
+                           │
+                           ▼
+                    ┌─────────────┐
+                    │  PostgreSQL │
+                    │  (Database) │
+                    └─────────────┘
+```
+
+---
+
+## Environment Variables Reference
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `REDIS_URL` | Auto | - | From Redis plugin |
+| `DATABASE_URL` | Auto | - | From PostgreSQL plugin |
+| `HIGH_RECALL_MODE` | Yes | - | Set to `true` for Kenya pipeline |
+| `SCRAPER_CONCURRENCY` | No | 3 | Max concurrent scrapers (max 4) |
+| `CACHE_TTL_SECONDS` | No | 600 | Cache TTL in seconds |
+| `SCRAPER_TIMEOUT_SECONDS` | No | 25 | Per-scraper timeout |
+| `TOTAL_PHASE_TIMEOUT_SECONDS` | No | 60 | Total scraping timeout |
+| `SERPAPI_API_KEY` | Yes | - | SerpAPI key |
+
+---
+
+## Scaling
+
+### Increase Concurrency (Paid Tier)
+```bash
+railway variables set SCRAPER_CONCURRENCY=4
+```
+
+### Add More Workers
+Scale horizontally by increasing Worker service instances in Railway dashboard.
+
+---
+
+## Monitoring
+
+### View Logs
+```bash
+# All services
+railway logs
+
+# Specific service
+railway logs --service delta9-api
+railway logs --service delta9-worker
+railway logs --service delta9-beat
+```
+
+### View Metrics
+In Railway dashboard:
+- CPU usage
+- Memory usage
+- Request count
+- Error rate
+
+---
 
 ## Local Development
 
-For local development with SQLite:
-
 ```bash
+# Set environment
 export DATABASE_URL="sqlite:///./local.db"
 export REDIS_URL="redis://localhost:6379/0"
 export HIGH_RECALL_MODE="true"
-export SERPAPI_API_KEY="your_key"
+export SCRAPER_CONCURRENCY="3"
 
 # Terminal 1: API
 python -m app.main
@@ -153,6 +299,14 @@ python -m app.main
 # Terminal 2: Worker
 celery -A app.core.celery_app.celery worker --loglevel=info
 
-# Terminal 3: Beat (optional - for scheduled tasks)
+# Terminal 3: Beat
 celery -A app.core.celery_app.celery beat --loglevel=info
 ```
+
+---
+
+## Support
+
+- Railway Docs: https://docs.railway.app
+- Celery Docs: https://docs.celeryproject.org
+- FastAPI Docs: https://fastapi.tiangolo.com
