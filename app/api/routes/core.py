@@ -269,15 +269,29 @@ async def get_categories():
     GET /api/categories
     Returns supported product categories and their keywords.
     """
-    from app.engine.query_intelligence import CATEGORY_PATTERNS
-    
-    categories = {}
-    for name, config in CATEGORY_PATTERNS.items():
-        categories[name] = {
-            "keywords": config["keywords"][:10],
-            "platforms": config.get("platforms", []),
-            "example_phrases": config["buyer_phrases"][:3]
+    # Simplified categories without old engine dependency
+    categories = {
+        "general": {
+            "keywords": ["buy", "looking for", "need", "want", "searching"],
+            "platforms": ["telegram", "facebook", "twitter"],
+            "example_phrases": ["I'm looking for", "I need", "Where can I find"]
+        },
+        "vehicles": {
+            "keywords": ["car", "toyota", "nissan", "vehicle", "truck"],
+            "platforms": ["facebook", "jiji"],
+            "example_phrases": ["Looking for a car", "I want to buy a", "Need a vehicle"]
+        },
+        "electronics": {
+            "keywords": ["phone", "laptop", "iphone", "samsung", "computer"],
+            "platforms": ["telegram", "facebook", "jiji"],
+            "example_phrases": ["I need an iPhone", "Looking for a laptop", "Buy phone"]
+        },
+        "property": {
+            "keywords": ["house", "apartment", "rent", "land", "office"],
+            "platforms": ["facebook", "jiji"],
+            "example_phrases": ["Looking for a house", "Need an apartment", "Land for sale"]
         }
+    }
     
     return {"categories": categories}
 

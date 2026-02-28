@@ -3,18 +3,18 @@ import asyncio
 import logging
 import sys
 import os
-import json
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from app.services.search_service import search
-from app.engine.buyer_classifier import BuyerClassifier
+from app.services.kenya_high_recall_pipeline import calculate_kenyan_intent_score
 from app.scrapers.registry import SCRAPER_REGISTRY, get_active_scrapers_sorted
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 async def test_pipeline():
     print(f"\n--- REGISTRY CHECK ---")
@@ -27,7 +27,7 @@ async def test_pipeline():
     
     print(f"\n--- TESTING SEARCH PIPELINE for '{query}' in '{location}' ---")
     
-    # 1. Run Search Service (which uses QueryEngine + MultiScraper + BuyerClassifier)
+    # 1. Run Search Service (uses new high-recall pipeline)
     result = await search(query, location)
     
     print(f"\n--- RESULTS ---")
@@ -48,9 +48,8 @@ async def test_pipeline():
     else:
         print("No leads found.")
 
-    # 2. Test Classifier directly with specific text
-    print(f"\n--- TESTING CLASSIFIER DIRECTLY ---")
-    classifier = BuyerClassifier()
+    # 2. Test Intent Scoring directly with specific text
+    print(f"\n--- TESTING INTENT SCORING DIRECTLY ---")
     
     samples = [
         "I am looking for iPhone 15 pro max 256gb within Nairobi. Budget 150k. 0712345678",
@@ -60,13 +59,18 @@ async def test_pipeline():
     ]
     
     for text in samples:
-        signal = classifier.classify(text)
+        score = calculate_kenyan_intent_score(text)
+        # Determine badge
+        if score >= 0.7:
+            badge = "HOT"
+        elif score >= 0.5:
+            badge = "WARM"
+        else:
+            badge = "COLD"
+        
         print(f"\nText: {text}")
-        print(f"  Is Buyer: {signal.is_buyer}")
-        print(f"  Score: {signal.intent_score} ({signal.badge})")
-        print(f"  Details: {signal.score_details}")
-        print(f"  Phone: {signal.phone}")
-        print(f"  Budget: {signal.budget}")
+        print(f"  Score: {score:.2f} ({badge})")
+
 
 if __name__ == "__main__":
     asyncio.run(test_pipeline())

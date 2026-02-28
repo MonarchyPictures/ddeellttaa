@@ -1,22 +1,12 @@
-# app/telegram/message_processor.py
-# ============================================================
-# MESSAGE PROCESSOR
-# ============================================================
-# Takes raw Telegram messages and:
-# 1. Classifies as buyer/seller
-# 2. Extracts contact info
-# 3. Saves to database
-# 4. Sends notifications for hot leads
-# ============================================================
 
 import logging
 import hashlib
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 
-from app.engine.buyer_classifier import BUYER_CLASSIFIER, BuyerSignal
 from app.services.cache_service import cache
 from app.services.lead_storage import save_leads_to_db
+from app.services.kenya_high_recall_pipeline import calculate_kenyan_intent_score
 from .notifier import BuyerNotifier
 
 logger = logging.getLogger("telegram.processor")
@@ -25,10 +15,10 @@ logger = logging.getLogger("telegram.processor")
 class MessageProcessor:
     """
     Processes Telegram messages through the buyer classification pipeline.
+    Uses new high-recall intent scoring (old engine removed).
     """
 
     def __init__(self):
-        self.classifier = BUYER_CLASSIFIER
         self.notifier = BuyerNotifier()
         self.processed_count = 0
         self.buyer_count = 0
@@ -69,45 +59,51 @@ class MessageProcessor:
         cache.set(cache_key, "1", ttl_seconds=86400)  # 24 hour dedup window
 
         # ── Classify ───────────────────────────────────────
-        signal = self.classifier.classify(
-            text=text,
-            url=msg_data.get("url", ""),
-            source="telegram"
-        )
-
+        # Use new high-recall intent scoring
+        intent_score = calculate_kenyan_intent_score(text)
+        
         self.processed_count += 1
 
-        if not signal.is_buyer:
-            logger.debug(f"Not a buyer: {text[:50]}...")
+        # Threshold check (0.25 = low threshold for high recall)
+        if intent_score < 0.25:
+            logger.debug(f"Not a buyer (score {intent_score:.2f}): {text[:50]}...")
             return None
 
+        # Determine badge based on score
+        if intent_score >= 0.7:
+            badge = "HOT"
+        elif intent_score >= 0.5:
+            badge = "WARM"
+        else:
+            badge = "COLD"
+
         # ── Enhance with Telegram-specific data ────────────
+        # Extract phone if present in text
+        import re
+        phone_match = re.search(r'(\+?254\d{9}|0\d{9}|\+?256\d{9})', text)
+        phone = phone_match.group(0) if phone_match else None
+        
         # Telegram gives us the sender's phone number directly!
         telegram_phone = msg_data.get("sender_phone", "")
-        if telegram_phone and not signal.phone:
+        if telegram_phone and not phone:
             # Format phone number
             if not telegram_phone.startswith("+"):
                 telegram_phone = f"+{telegram_phone}"
-            signal.phone = telegram_phone
-
-            # Generate WhatsApp link
-            clean = telegram_phone.replace("+", "").replace(" ", "")
-            signal.whatsapp = f"https://wa.me/{clean}"
+            phone = telegram_phone
 
         # Use sender name
         sender_name = msg_data.get("sender_name", "")
-        if sender_name and signal.buyer_name == "Unknown":
-            signal.buyer_name = sender_name
+        buyer_name = sender_name if sender_name else "Anonymous"
 
         # ── Build Lead ─────────────────────────────────────
-        lead = self._build_telegram_lead(msg_data, signal)
+        lead = self._build_telegram_lead(msg_data, text, intent_score, badge, phone, buyer_name)
 
         self.buyer_count += 1
         logger.info(
             f"🎯 BUYER FOUND in @{msg_data.get('group_username', '?')}: "
             f"'{text[:60]}...' "
-            f"Score={signal.intent_score} Badge={signal.badge} "
-            f"Phone={signal.phone or 'N/A'}"
+            f"Score={intent_score:.2f} Badge={badge} "
+            f"Phone={phone or 'N/A'}"
         )
 
         try:
@@ -116,7 +112,7 @@ class MessageProcessor:
             save_leads_to_db([lead], query_text="telegram_monitor")
 
             # 6. Notify
-            priority = "hot" if signal.intent_score > 0.8 else "normal"
+            priority = "hot" if intent_score > 0.8 else "normal"
             await self.notifier.notify(lead, priority=priority)
 
         except Exception as e:
@@ -149,11 +145,10 @@ class MessageProcessor:
         )
         return leads
 
-    def _build_telegram_lead(self, msg_data: Dict, signal) -> Dict:
-        """Build a lead dict from Telegram message data."""
+    def _build_telegram_lead(self, msg_data: Dict, text: str, intent_score: float, badge: str, phone: str, buyer_name: str) -> Dict:
+        """Build a lead dict from Telegram message data (new version without old engine)."""
         
         url = msg_data.get("url", "")
-        text = msg_data.get("text", "")
         group_name = msg_data.get("group_name", "Telegram Group")
         group_username = msg_data.get("group_username", "")
         sender_username = msg_data.get("sender_username", "")
@@ -162,14 +157,14 @@ class MessageProcessor:
         contact_link = ""
         if sender_username:
             contact_link = f"https://t.me/{sender_username}"
-        elif signal.phone:
-            clean = signal.phone.replace("+", "").replace(" ", "")
+        elif phone:
+            clean = phone.replace("+", "").replace(" ", "")
             contact_link = f"https://wa.me/{clean}"
 
         # WhatsApp message template
         whatsapp_url = ""
-        if signal.phone:
-            clean = signal.phone.replace("+", "").replace(" ", "")
+        if phone:
+            clean = phone.replace("+", "").replace(" ", "")
             if clean.startswith("0"):
                 clean = "254" + clean[1:]
             elif not clean.startswith("254"):
@@ -179,24 +174,20 @@ class MessageProcessor:
         # Unique ID
         lead_id = hashlib.md5(f"{url}:{text[:100]}".encode()).hexdigest()[:16]
 
-        ranked_score = round(
-            signal.intent_score * 0.4 +
-            signal.urgency_score * 0.3 +
-            signal.confidence * 0.3,
-            2
-        )
+        # Simple ranked score calculation
+        ranked_score = round(intent_score * 0.7 + (0.3 if phone else 0), 2)
 
         return {
             # Core fields
             "id": lead_id,
-            "buyer_name": signal.buyer_name,
+            "buyer_name": buyer_name,
             "title": text[:200],
-            "price": signal.budget or "Contact for Price",
-            "location": signal.location or "Kenya",
-            "phone": signal.phone,
-            "contact_phone": signal.phone,
-            "email": signal.email,
-            "contact_email": signal.email,
+            "price": "Contact for Price",
+            "location": "Kenya",
+            "phone": phone,
+            "contact_phone": phone,
+            "email": None,
+            "contact_email": None,
             "source": f"Telegram: {group_name}",
             "url": url,
             "source_url": url,
@@ -210,29 +201,29 @@ class MessageProcessor:
             "has_media": msg_data.get("has_media", False),
 
             # Scores
-            "intent_score": signal.intent_score,
-            "intent_strength": signal.intent_score,
-            "buyer_match_score": signal.intent_score,
-            "confidence": signal.confidence,
-            "confidence_score": signal.confidence,
-            "urgency_score": signal.urgency_score,
+            "intent_score": intent_score,
+            "intent_strength": intent_score,
+            "buyer_match_score": intent_score,
+            "confidence": round(intent_score * 100, 2),
+            "confidence_score": intent_score,
+            "urgency_score": 0.5,
             "ranked_score": ranked_score,
             "rank_score": ranked_score,
 
             # Display
-            "buyer_request_snippet": signal.specific_need[:500],
-            "buyer_intent_quote": signal.specific_need[:300],
-            "snippet": signal.specific_need[:300],
+            "buyer_request_snippet": text[:500],
+            "buyer_intent_quote": text[:300],
+            "snippet": text[:300],
 
             # Metadata
             "market_side": "demand",
-            "badge": signal.badge,
-            "verification_flag": "verified" if signal.phone else "telegram_unverified",
+            "badge": badge,
+            "verification_flag": "verified" if phone else "telegram_unverified",
             "intent_type": "BUYER",
-            "persona": signal.persona,
-            "timeline": signal.timeline,
+            "persona": "price_conscious",
+            "timeline": "flexible",
             "status": "NEW",
-            "is_hot_lead": signal.badge == "HOT",
+            "is_hot_lead": badge == "HOT",
 
             # WhatsApp
             "whatsapp_url": whatsapp_url,
@@ -243,7 +234,7 @@ class MessageProcessor:
             "posted_at": msg_data.get("timestamp"),
 
             # Score details
-            "score_details": signal.score_details,
+            "score_details": {"method": "high_recall_pipeline_v2"},
             "ui_filter_status": "shown",
             "tap_count": 0
         }

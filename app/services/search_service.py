@@ -37,8 +37,7 @@ from app.services.confidence_engine import calculate_confidence
 from app.services.page_enricher import enrich_lead_data
 from app.core.cache import get_cached, set_cached
 from app.services.validation_service import VALIDATION_SERVICE
-from app.engine.buyer_classifier import BUYER_CLASSIFIER
-from app.engine.search_engine import SEARCH_ENGINE
+# NOTE: Old engine components removed. Using new high-recall pipeline instead.
 
 logger = logging.getLogger(__name__)
 

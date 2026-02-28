@@ -257,14 +257,21 @@ class GroupManager:
         return unique
 
     def _detect_category(self, query: str) -> str:
-        """Simple category detection from query."""
+        """Simple category detection from query (without old engine dependency)."""
         query_lower = query.lower()
-
-        for category, groups in KENYAN_GROUPS.items():
-            # Check against keywords from the query intelligence engine
-            from app.engine.query_intelligence import CATEGORY_PATTERNS
-            config = CATEGORY_PATTERNS.get(category, {})
-            if any(kw in query_lower for kw in config.get("keywords", [])):
+        
+        # Simple keyword-based category detection
+        category_keywords = {
+            "vehicles": ["car", "toyota", "nissan", "subaru", "vehicle", "truck", "van", "bus", "pickup", "prado", "vitz", "hilux"],
+            "electronics": ["phone", "laptop", "iphone", "samsung", "computer", "tv", "tablet", "camera", "electronic"],
+            "property": ["house", "apartment", "rent", "land", "office", "property", "estate", "building"],
+            "construction": ["cement", "steel", "wood", "tiles", "paint", "construction", "building materials", "hardware"],
+            "furniture": ["furniture", "sofa", "bed", "table", "chair", "cabinet", "wardrobe"],
+            "services": ["service", "repair", "plumber", "electrician", "cleaning", "moving", "transport"],
+        }
+        
+        for category, keywords in category_keywords.items():
+            if any(kw in query_lower for kw in keywords):
                 return category
 
         return "general"
