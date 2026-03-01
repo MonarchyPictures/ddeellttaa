@@ -47,14 +47,15 @@ from app.api.routes import notifications
 from app.api.routes import search  # Unified search endpoint
 
 from app.middleware.geoip import KenyaLockingMiddleware
-from app.db.database import engine
-from app.db.base_class import Base
-from app.db import models
-
-# Create database tables on startup
-Base.metadata.create_all(bind=engine)
+from app.db.init_db import init_db
 
 app = FastAPI(title="Delta 9 API")
+
+
+@app.on_event("startup")
+async def startup():
+    """Initialize database tables on application startup."""
+    init_db()
 
 # Mount static files (frontend build)
 frontend_dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
