@@ -86,6 +86,11 @@ class Lead(Base):
     readiness_level = Column(String)
     urgency_score = Column(Float)
     budget_info = Column(String)
+    
+    # Kenya-Optimized Scoring Components
+    budget_score = Column(Float, default=0.0)
+    location_score = Column(Float, default=0.0)
+    badge = Column(String, default="COLD", index=True)  # HOT, WARM, COLD, REJECT
     product_specs = Column(JSON)
     deal_probability = Column(Float)
     intent_type = Column(String)
@@ -273,6 +278,11 @@ class Lead(Base):
             "geo_strength": self.geo_strength or "low",
             "geo_region": self.geo_region or "Global",
             "ranked_score": self.ranked_score or 0.0,
+            
+            # Kenya-optimized scoring components
+            "budget_score": self.budget_score or 0.0,
+            "location_score": self.location_score or 0.0,
+            "badge": self.badge or "COLD",
             
             "contact_flag": self.contact_flag,
             "verification_flag": self.verification_flag,

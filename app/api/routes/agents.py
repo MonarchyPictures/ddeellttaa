@@ -128,6 +128,43 @@ def run_agent_now(agent_id: str, db: Session = Depends(get_db)):
         return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
 
+@router.post("/{agent_id}/run-sync")
+def run_agent_sync(agent_id: str, db: Session = Depends(get_db)):
+    """
+    Trigger an agent to run synchronously (blocking execution).
+    Waits for result and returns leads found.
+    """
+    try:
+        agent_uuid = uuid.UUID(agent_id)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid agent ID format"})
+    
+    agent = db.query(Agent).filter(Agent.id == agent_uuid).first()
+    if not agent:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Agent not found"})
+    
+    try:
+        from app.services.search_service import search
+        import asyncio
+        
+        # Run search synchronously
+        logger.info(f"[AGENT SYNC] Running agent {agent_id} sync execution")
+        result = asyncio.run(search(agent.query, agent.location))
+        
+        leads_found = len(result.get("leads", []))
+        logger.info(f"[AGENT SYNC] Agent {agent_id} found {leads_found} leads")
+        
+        return {
+            "status": "success", 
+            "message": f"Agent executed successfully",
+            "leads_found": leads_found,
+            "result": f"Found {leads_found} leads"
+        }
+    except Exception as e:
+        logger.error(f"[AGENT SYNC] Error running agent {agent_id}: {e}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
+
+
 @router.get("/{agent_id}", response_model=AgentResponse)
 def get_agent(agent_id: str, db: Session = Depends(get_db)):
     """Get agent details."""

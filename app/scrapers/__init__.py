@@ -1,12 +1,30 @@
+# app/scrapers/__init__.py
+"""
+Scrapers module for Delta9 lead generation.
+
+Organized into:
+- Light scrapers: API-based, high concurrency
+- Heavy scrapers: Playwright-based, low concurrency
+"""
+
 import asyncio
 import logging
 from typing import List, Dict, Any
+
 from .registry import get_active_scrapers, SCRAPER_REGISTRY
 from .base_scraper import BaseScraper
+from .light import LIGHT_SCRAPERS
+from .heavy import HEAVY_SCRAPERS
+
+# Import specific scrapers for convenience
 from .facebook_marketplace import FacebookMarketplaceScraper
 from .reddit import RedditScraper
 
 logger = logging.getLogger(__name__)
+
+# Combined registry
+ALL_SCRAPERS = {**LIGHT_SCRAPERS, **HEAVY_SCRAPERS}
+
 
 async def run_scrapers(query: str, location: str = "Kenya") -> List[Dict[str, Any]]:
     """
@@ -49,10 +67,18 @@ async def run_scrapers(query: str, location: str = "Kenya") -> List[Dict[str, An
 
     return all_leads
 
+
 __all__ = [
+    # Base
     "BaseScraper",
+    # Registries
+    "LIGHT_SCRAPERS",
+    "HEAVY_SCRAPERS",
+    "ALL_SCRAPERS",
+    "SCRAPER_REGISTRY",
+    # Specific scrapers
     "FacebookMarketplaceScraper",
     "RedditScraper",
+    # Functions
     "run_scrapers",
-    "SCRAPER_REGISTRY"
 ]

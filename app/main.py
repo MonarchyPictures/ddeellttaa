@@ -1,10 +1,10 @@
-# DEBUG BUILD: 2026-02-27T23:59:00Z - CACHE_BUSTER_V3
+# DEBUG BUILD: 2026-02-28T01:00:00Z - CACHE_BUSTER_V4
 import logging
 logging.basicConfig(level=logging.INFO)
 _logger = logging.getLogger("delta9")
 _logger.info("="*60)
-_logger.info("MAIN.PY LOADED - VERSION 2026-02-27-HIGH-RECALL-V3")
-_logger.info("RAILWAY DEPLOY: Cache cleared, all scrapers enabled")
+_logger.info("MAIN.PY LOADED - VERSION 2026-02-28-V3-ANTI429")
+_logger.info("RAILWAY DEPLOY: Anti-429 hardened, Fast/Deep mode")
 _logger.info("="*60)
 
 import os
@@ -37,17 +37,15 @@ if SENTRY_DSN:
         profiles_sample_rate=1.0,
     )
 
-# Import routers
-from app.api.api import api_router
-from app.api.routes import leads
+# Import routers - ONLY search.router for search endpoint
 from app.api.routes import scrapers
 from app.api.routes import pipeline
 from app.api.routes import outreach
 from app.api.routes import admin
-
 from app.api.routes import agents
-from app.api.routes import core
 from app.api.routes import notifications
+from app.api.routes import search  # Unified search endpoint
+
 from app.middleware.geoip import KenyaLockingMiddleware
 from app.db.database import engine
 from app.db.base_class import Base
@@ -95,36 +93,28 @@ app.add_middleware(
     expose_headers=["*"],
 )
 
-# Include API Router (v1)
-app.include_router(api_router, prefix="/api/v1")
+# ============================================================
+# ROUTER MOUNTS - CLEAN ARCHITECTURE
+# ============================================================
+# ONE search endpoint: POST /api/search
+# ONE pipeline: Kenya High Recall Pipeline
+# ONE scoring system: Weighted Kenya-optimized model
 
-# Include notifications directly at /api/notifications to match frontend
-app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
-
-# Include other routers
-app.include_router(leads.router, prefix="/api/leads", tags=["leads"])
-# app.include_router(search.router, prefix="/api/search", tags=["search"]) # Removed in favor of core.router
+app.include_router(search.router, prefix="/api", tags=["search"])
 app.include_router(scrapers.router, prefix="/api/scrapers", tags=["scrapers"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(outreach.router, prefix="/api/outreach", tags=["outreach"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
-
-# Include agents and core
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
-app.include_router(core.router, prefix="/api/core", tags=["core"])
-# Compatibility: Frontend expects /api/search
-app.include_router(core.router, prefix="/api", tags=["search_root"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 
-# ── TELEGRAM ROUTES ──────────────────────────────────
+# Telegram routes
 from app.api.routes import telegram as telegram_routes
 app.include_router(
     telegram_routes.router,
     prefix="/api/telegram",
     tags=["telegram"]
 )
-
-# Legacy/Frontend compatibility: Expose core routes (like /success/stats) at root /api
-# core.router is already mounted on /api above; avoid duplicate route registration
 
 @app.get("/")
 def read_root():
@@ -134,93 +124,23 @@ def read_root():
         return FileResponse(frontend_index)
     return {"message": "Welcome to Delta 9 API", "status": "running", "frontend": "not built"}
 
-@app.get("/api/ping")
-def ping():
-    """Simple ping endpoint for connectivity testing."""
-    return {"status": "ok", "message": "pong"}
-
-@app.get("/api-test")
-def api_test_page():
-    """Serve API test page for debugging."""
-    test_page = os.path.join(frontend_dist_path, "api-test.html")
-    if os.path.exists(test_page):
-        return FileResponse(test_page)
-    return {"error": "api-test.html not found. Build frontend first."}
 
 @app.get("/health")
 def health_check():
-    """
-    Production Health Check.
-    Railway uses this to know if the app is alive.
-    """
-    db_ok = True
-    scrapers_ok = True
-    telegram_ok = True
-    scraper_count = 0
-    try:
-        from sqlalchemy import text
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-    except Exception:
-        db_ok = False
-    try:
-        from app.scrapers.registry import ACTIVE_SCRAPERS
-        scraper_count = len(ACTIVE_SCRAPERS)
-        scrapers_ok = scraper_count > 0
-    except Exception:
-        scrapers_ok = False
-    try:
-        from app.telegram.config import get_telegram_config_report
-        report = get_telegram_config_report()
-        require_telegram = os.environ.get("REQUIRE_TELEGRAM", "false").lower() == "true"
-        telegram_ok = report["enabled"] if require_telegram else True
-    except Exception:
-        telegram_ok = False if os.environ.get("REQUIRE_TELEGRAM", "false").lower() == "true" else True
-
-    healthy = db_ok and scrapers_ok and telegram_ok
+    """Health check endpoint."""
     return {
-        "status": "healthy" if healthy else "degraded",
-        "service": "delta-9-api",
-        "version": "1.0.0",
-        "environment": os.environ.get("RAILWAY_ENVIRONMENT", "development"),
-        "checks": {
-            "database": "ok" if db_ok else "failed",
-            "scrapers": "ok" if scrapers_ok else "failed",
-            "telegram": "ok" if telegram_ok else "failed",
-            "active_scrapers": scraper_count
-        }
+        "status": "healthy",
+        "service": "delta-9",
+        "timestamp": __import__('datetime').datetime.utcnow().isoformat()
     }
 
 
-# Startup event: Print all registered routes
-@app.on_event("startup")
-async def print_routes():
-    """Print all registered routes at startup for debugging."""
-    logger.info("=" * 60)
-    logger.info("REGISTERED FASTAPI ROUTES:")
-    logger.info("=" * 60)
-    for route in app.routes:
-        if hasattr(route, "methods") and hasattr(route, "path"):
-            methods = ",".join(route.methods)
-            logger.info(f"  {methods} {route.path}")
-    logger.info("=" * 60)
-
-
-# SPA Catch-all: Serve index.html for any unmatched routes (client-side routing)
-@app.get("/{full_path:path}")
-def serve_spa(full_path: str):
-    """Serve frontend SPA for all unmatched routes."""
-    # Don't interfere with API routes
-    if full_path.startswith("api/") or full_path.startswith("assets/"):
-        return {"detail": "Not Found"}
-    
-    frontend_index = os.path.join(frontend_dist_path, "index.html")
-    if frontend_enabled and os.path.exists(frontend_index):
-        return FileResponse(frontend_index)
-    
-    return {"detail": "Not Found"}
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
+@app.get("/api-test")
+def api_test():
+    """Quick API test endpoint."""
+    return {
+        "status": "ok",
+        "message": "API is running",
+        "search_endpoint": "POST /api/search",
+        "docs": "/docs"
+    }

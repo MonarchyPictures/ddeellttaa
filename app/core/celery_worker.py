@@ -28,7 +28,7 @@ from app.services.agent_scheduler import (
     should_execute_agent
 )
 from app.services.parallel_scraper_runner import run_scrapers_parallel
-from app.services.kenya_high_recall_pipeline import (
+from app.services.kenya_intent_engine import (
     generate_high_recall_queries,
     process_high_recall_results
 )

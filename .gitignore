@@ -1,19 +1,101 @@
-.venv/
+# Python
 __pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# Database
 *.db
 *.db-wal
 *.db-shm
-*.log
-.env
-node_modules/
-dist/
-.DS_Store
-frontend/node_modules/
-frontend/dist/
-frontend/.env
-
-# Celery
+*.sqlite
+*.sqlite3
 celery_broker.db
 celery_results.db
 celerybeat-schedule
-intent_radar_v3.db
+
+# Logs
+*.log
+*.err
+*.out
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+dist/
+build/
+.vite/
+*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Temporary/Output Files
+response.json
+result.json
+test_output.json
+output.json
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Session/Cache
+sessions/
+smoke_traces/
+.pytest_cache/
+
+# System Files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Railway/Heroku (keep config, ignore local)
+*.pid

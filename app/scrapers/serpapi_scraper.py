@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from app.core.config import settings
 from app.services.query_rewriter import build_buyer_query
 from app.services.market_classifier import classify_market_side
-from app.services.intent_engine import calculate_intent_score
+from app.services.kenya_intent_engine import calculate_kenyan_intent_score as calculate_intent_score
 from .base_scraper import BaseScraper
 
 logger = logging.getLogger(__name__)

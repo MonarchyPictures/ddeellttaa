@@ -178,6 +178,8 @@ export const fetchLeadsMeta = async (limit = 10) => {
 
 export const searchLeads = async (query, location = 'Kenya') => {
   try {
+    console.log(`[API] POST /search query="${query}" location="${location}"`);
+    
     const response = await apiFetch('/search', {
       method: 'POST',
       body: JSON.stringify({ query, location }),
@@ -185,19 +187,16 @@ export const searchLeads = async (query, location = 'Kenya') => {
     });
     
     if (!response.ok) {
-      // Try GET fallback
-      const getResponse = await apiFetch(`/search?q=${encodeURIComponent(query)}&location=${encodeURIComponent(location)}`);
-      if (getResponse.ok) {
-        const data = await getResponse.json();
-        return data.results || data.leads || data.data || [];
-      }
+      console.error('[API] Search failed:', response.status);
       return [];
     }
     
     const data = await response.json();
-    return data.results || data.leads || data.data || [];
+    const results = data.results || data.leads || [];
+    console.log(`[API] Received ${results.length} leads (mode: ${data.mode || 'unknown'})`);
+    return results;
   } catch (error) {
-    console.error('Search error:', error);
+    console.error('[API] Search error:', error);
     return [];
   }
 };
@@ -236,7 +235,7 @@ export const fetchNotificationCount = async () => {
 
 export const pingBackend = async () => {
   try {
-    const response = await apiFetch('/ping');
+    const response = await apiFetch('/search/health');
     return response.ok;
   } catch (error) {
     return false;

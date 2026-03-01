@@ -22,14 +22,14 @@ def calculate_confidence(
     """
     # Handle legacy string arguments
     if isinstance(intent_score_or_text, str):
-        from app.services.intent_engine import calculate_intent_score
-        from app.services.urgency_ranker import calculate_urgency_score
+        from app.services.kenya_intent_engine import calculate_kenyan_buyer_score
 
         text = intent_score_or_text
         source_name = str(urgency_score_or_source).lower()
 
-        intent_score = calculate_intent_score(text)
-        urgency_score = calculate_urgency_score(text)
+        score_result, _ = calculate_kenyan_buyer_score(text, source_name)
+        intent_score = score_result
+        urgency_score = 0.5  # Default urgency
         source_rel = SOURCE_RELIABILITY.get(source_name, 0.5)
     else:
         intent_score = float(intent_score_or_text)

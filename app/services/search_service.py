@@ -17,7 +17,7 @@ import asyncio
 from typing import List, Dict, Any
 from datetime import datetime, timezone
 
-from app.scrapers.registry import get_active_scrapers_sorted, SCRAPER_REGISTRY
+from app.scrapers.registry import get_active_scrapers_sorted
 from app.services.kenya_high_recall_pipeline import (
     generate_high_recall_queries,
     process_high_recall_results
@@ -29,87 +29,112 @@ logger = logging.getLogger(__name__)
 
 
 async def search(query: str, location: str = "Kenya") -> Dict[str, Any]:
-    """
-    Main search function using clean high-recall pipeline.
-    
-    Pipeline:
-    1. Check cache
-    2. Generate high-recall queries
-    3. Run scrapers in parallel
-    4. Score and filter results
-    5. Return leads
-    """
+    print(f"[SEARCH START] query='{query}', location='{location}'")
     logger.info(f"🔍 Search: '{query}' in '{location}'")
-    
-    # Check cache first
+
     cached = get_cached(query, location)
     if cached:
-        logger.info(f"⚡ Cache hit for '{query}'")
         return {
             "results": cached,
             "leads": cached,
             "count": len(cached),
             "status": "success",
             "mode": "cache",
-            "message": f"Found {len(cached)} leads (from cache)"
         }
-    
+
     try:
-        # Step 1: Generate high-recall queries
         queries = generate_high_recall_queries(query, location)
-        logger.info(f"Generated {len(queries)} queries: {queries}")
+        logger.warning(f"[SEARCH DEBUG] Generated {len(queries)} queries: {queries}")
+
+        if not queries:
+            logger.error("[ERROR] No queries generated")
+            return {
+                "results": [],
+                "leads": [],
+                "count": 0,
+                "status": "error",
+                "message": "No queries generated"
+            }
+
+        scraper_instances = get_active_scrapers_sorted()
+        print(f"[SEARCH DEBUG] Got {len(scraper_instances)} scrapers: {[type(s).__name__ for s in scraper_instances]}")
+
+        if not scraper_instances:
+            logger.error("[ERROR] No active scrapers found")
+            return {
+                "results": [],
+                "leads": [],
+                "count": 0,
+                "status": "error",
+                "message": "No scrapers active"
+            }
+
+        logger.info(f"[DEBUG] Using {len(scraper_instances)} scrapers, {len(queries)} queries")
+
+        # Run all queries in parallel (individual scrapers have 8s timeout)
+        query_tasks = [
+            run_scrapers_parallel(scraper_instances, q, location, 24)
+            for q in queries[:2]  # LIMIT: max 2 queries
+        ]
         
-        # Step 2: Get all scrapers
-        scraper_instances = list(SCRAPER_REGISTRY.values())
-        logger.info(f"Using {len(scraper_instances)} scrapers")
-        
-        # Step 3: Run scrapers for each query
+        # Gather all results (no overall timeout - let individual scrapers timeout)
+        query_results = await asyncio.gather(*query_tasks, return_exceptions=True)
+
+        # Flatten results (skip exceptions)
         all_raw_results = []
-        for q in queries:
-            try:
-                results = await run_scrapers_parallel(
-                    scrapers=scraper_instances,
-                    query=q,
-                    location=location,
-                    hours=24
-                )
-                all_raw_results.extend(results)
-                logger.info(f"Query '{q}': {len(results)} results")
-            except Exception as e:
-                logger.error(f"Query '{q}' failed: {e}")
-                continue
-        
-        logger.info(f"Total raw results: {len(all_raw_results)}")
-        
-        # Step 4: Score and filter
-        leads = process_high_recall_results(all_raw_results)
-        logger.info(f"Processed {len(leads)} leads after scoring")
-        
-        # Cache results
+        logger.warning(f"[SEARCH DEBUG] query_results count: {len(query_results)}")
+        for i, r in enumerate(query_results):
+            logger.warning(f"[SEARCH DEBUG] query_result[{i}]: type={type(r)}, is_list={isinstance(r, list)}")
+            if isinstance(r, list):
+                logger.warning(f"[SEARCH DEBUG] query_result[{i}] length: {len(r)}")
+                all_raw_results.extend(r)
+            elif isinstance(r, Exception):
+                logger.warning(f"[DEBUG] Query failed: {r}")
+
+        logger.warning(f"[SEARCH DEBUG] Total raw results: {len(all_raw_results)}")
+        if all_raw_results:
+            logger.warning(f"[SEARCH DEBUG] Sample raw: {str(all_raw_results[0])[:200]}")
+
+        try:
+            print(f"[DEBUG] Calling process_high_recall_results with {len(all_raw_results)} raw results")
+            leads = process_high_recall_results(all_raw_results)
+            print(f"[DEBUG] process_high_recall_results returned {len(leads)} leads")
+            logger.warning(f"[SEARCH DEBUG] process_high_recall_results returned {len(leads)} leads")
+        except Exception as e:
+            print(f"[DEBUG] process_high_recall_results FAILED: {e}")
+            logger.error(f"[SEARCH DEBUG] process_high_recall_results FAILED: {e}")
+            leads = []
+
+        # Ensure minimum display count
+        DISPLAY_MIN = 4
+        if len(leads) > DISPLAY_MIN:
+            leads = leads[:DISPLAY_MIN]
+
+        logger.warning(f"[SEARCH DEBUG] Leads after scoring: {len(leads)}, type: {type(leads)}")
+        if leads:
+            logger.warning(f"[SEARCH DEBUG] First lead: {leads[0] if isinstance(leads, list) else 'not list'}")
+
         if leads:
             set_cached(query, leads, location)
-        
-        return {
+
+        result = {
             "results": leads,
             "leads": leads,
             "count": len(leads),
             "status": "success" if leads else "no_results",
-            "mode": "high_recall_pipeline",
-            "message": f"Found {len(leads)} leads" if leads else "No leads found",
-            "total_signals_captured": len(all_raw_results),
-            "total_signals_scanned": len(all_raw_results),
-            "buyers_found": len(leads)
+            "mode": "high_recall_pipeline"
         }
-        
+        logger.warning(f"[SEARCH DEBUG] Returning result with count: {result['count']}")
+        return result
+
     except Exception as e:
-        logger.error(f"Search failed: {e}")
+        logger.exception("Search crashed")
         return {
             "results": [],
             "leads": [],
             "count": 0,
             "status": "error",
-            "mode": "error",
-            "message": f"Search failed: {str(e)}"
+            "message": str(e)
         }
 
 

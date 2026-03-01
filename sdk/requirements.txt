@@ -1,0 +1,4 @@
+# Delta9 SDK - Minimal Runtime Dependencies
+# No dev-only dependencies included
+
+requests>=2.25.0

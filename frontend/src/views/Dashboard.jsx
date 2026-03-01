@@ -59,6 +59,7 @@ const Dashboard = () => {
   // Search flow: POST /api/search → setLeads(response.results)
 
   const handleSearch = async (e) => {
+    console.log("Search clicked");
     e.preventDefault();
     if (!searchQuery.trim()) return;
 
@@ -78,6 +79,7 @@ const Dashboard = () => {
         location: 'Kenya'
       };
       console.log('[FRONTEND] Request payload:', requestPayload);
+      console.log("About to call backend...");
 
       const response = await fetchWithRetry(`${API_URL}/search`, {
         method: 'POST',
@@ -86,6 +88,7 @@ const Dashboard = () => {
         cache: 'no-store'
       });
 
+      console.log("Fetch completed");
       console.log('[FRONTEND] Response status:', response.status);
 
       if (!response.ok) {
@@ -118,12 +121,15 @@ const Dashboard = () => {
       
       const results = data.results || data.leads || [];
       
+      console.log(`[FRONTEND] Received ${results.length} leads from backend`);
+      
       // Sort by ranked_score
       const sorted = results.sort((a, b) =>
         (b.ranked_score || b.intent_score || 0) - (a.ranked_score || a.intent_score || 0)
       );
 
       setLeads(sorted);
+      console.log(`[FRONTEND] Render ${sorted.length} leads`);
       setMetrics(data.meta || data.metrics || null);
 
       if (sorted.length === 0) {
@@ -154,13 +160,17 @@ const Dashboard = () => {
           </p>
 
           <form onSubmit={handleSearch} className="max-w-2xl mx-auto">
+            <label htmlFor="searchQuery" className="sr-only">Search</label>
             <div className="relative flex items-center">
               <Search className="absolute left-4 w-5 h-5 text-white/30" />
               <input
+                id="searchQuery"
+                name="searchQuery"
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="What are you selling? e.g., '2br apartment kileleshwa', 'toyota prado', 'water tank'..."
+                autoComplete="off"
                 className="w-full pl-12 pr-32 py-4 rounded-2xl
                            bg-white/5 border border-white/10 
                            text-white placeholder:text-white/25

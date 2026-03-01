@@ -26,6 +26,31 @@ SCRAPER_REGISTRY = {}
 SCRAPER_PRIORITY = {}
 ACTIVE_SCRAPERS = set()
 
+# --- Scraper Classification ---
+# Light scrapers: Fast, low memory, API-based
+LIGHT_SCRAPERS = {
+    "duckduckgo", "serpapi", "google_cse", "telegram",
+    "yahoo", "yandex", "brave"  # Alternative search engines
+}
+
+# Heavy scrapers: Playwright-based, high memory, slow
+HEAVY_SCRAPERS = {"facebook", "facebook_groups", "twitter", "jiji", "pigiame", "google_maps", "whatsapp_groups", "kenyan_forums"}
+
+
+def get_scraper_name(scraper_instance) -> str | None:
+    """Get scraper name from instance by reverse lookup."""
+    for name, registered_scraper in SCRAPER_REGISTRY.items():
+        if registered_scraper is scraper_instance:
+            return name
+    return None
+
+
+def get_scraper_weight(name: str) -> str:
+    """Return 'light' or 'heavy' for a scraper name."""
+    if name in LIGHT_SCRAPERS:
+        return "light"
+    return "heavy"
+
 
 def register_scraper(name, scraper, priority=None):
     """Register a scraper. Priority from config if not specified."""
@@ -54,13 +79,6 @@ def enable_scraper(name):
 
 def disable_scraper(name):
     ACTIVE_SCRAPERS.discard(name)
-
-
-def get_scraper_name(scraper):
-    for name, obj in SCRAPER_REGISTRY.items():
-        if obj == scraper:
-            return name
-    return None
 
 
 def get_active_scrapers_sorted():
@@ -92,15 +110,42 @@ def get_active_scrapers():
 
 try:
     from .serpapi_scraper import SerpAPIScraper
-    register_scraper("serpapi", SerpAPIScraper())
+    register_scraper("serpapi", SerpAPIScraper(), priority=1000)
     logger.info("🥇 TIER 1: SerpAPI registered (priority=1000)")
 except Exception as e:
     logger.warning(f"Could not load SerpAPIScraper: {e}")
 
+# ============================================================
+# TIER 1b: Alternative Search Engines (Google alternatives)
+# Priority: Yahoo > Yandex > Brave > Google (fallback)
+# ============================================================
+
+try:
+    from .yahoo import YahooScraper
+    register_scraper("yahoo", YahooScraper(), priority=920)
+    logger.info("🌐 TIER 1b: Yahoo Search registered (priority=920)")
+except Exception as e:
+    logger.warning(f"Could not load YahooScraper: {e}")
+
+try:
+    from .yandex import YandexScraper
+    register_scraper("yandex", YandexScraper(), priority=910)
+    logger.info("🌐 TIER 1b: Yandex Search registered (priority=910)")
+except Exception as e:
+    logger.warning(f"Could not load YandexScraper: {e}")
+
+try:
+    from .brave import BraveScraper
+    register_scraper("brave", BraveScraper(), priority=900)
+    logger.info("🌐 TIER 1b: Brave Search registered (priority=900)")
+except Exception as e:
+    logger.warning(f"Could not load BraveScraper: {e}")
+
+# Google CSE - now lower priority as fallback (fragile in Kenya)
 try:
     from .google_cse import GoogleCSEScraper
-    register_scraper("google_cse", GoogleCSEScraper())
-    logger.info("🥇 TIER 1: Google CSE registered (priority=950)")
+    register_scraper("google_cse", GoogleCSEScraper(), priority=850)
+    logger.info("🔍 TIER 1b: Google CSE registered (priority=850) — FALLBACK")
 except Exception as e:
     logger.warning(f"Could not load GoogleCSEScraper: {e}")
 

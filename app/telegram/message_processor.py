@@ -6,7 +6,7 @@ from typing import Dict, Any, Optional, List
 
 from app.services.cache_service import cache
 from app.services.lead_storage import save_leads_to_db
-from app.services.kenya_high_recall_pipeline import calculate_kenyan_intent_score
+from app.services.kenya_intent_engine import calculate_kenyan_intent_score
 from .notifier import BuyerNotifier
 
 logger = logging.getLogger("telegram.processor")
@@ -109,7 +109,7 @@ class MessageProcessor:
         try:
             # 5. Save to DB
             # We wrap in list because save_leads_to_db expects a batch
-            save_leads_to_db([lead], query_text="telegram_monitor")
+            save_leads_to_db([lead], "telegram_monitor")
 
             # 6. Notify
             priority = "hot" if intent_score > 0.8 else "normal"
