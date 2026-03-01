@@ -24,12 +24,18 @@ def init_db():
     try:
         # Log all tables that will be created
         tables = list(Base.metadata.tables.keys())
-        logger.info(f"📊 Registered tables: {tables}")
+        
+        # DEBUG: Startup visibility
+        print("=== STARTUP: Creating DB Tables ===")
+        print(f"Tables to create: {tables}")
         
         # Create all tables
         Base.metadata.create_all(bind=engine)
+        
+        print(f"=== TABLES CREATED: {len(tables)} tables ===")
         logger.info(f"✅ Database initialized with {len(tables)} tables")
         
     except Exception as e:
+        print(f"=== STARTUP ERROR: {e} ===")
         logger.error(f"❌ Failed to initialize database: {e}")
         raise
