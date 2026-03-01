@@ -32,15 +32,20 @@ async def search(query: str, location: str = "Kenya") -> Dict[str, Any]:
     print(f"[SEARCH START] query='{query}', location='{location}'")
     logger.info(f"🔍 Search: '{query}' in '{location}'")
 
-    cached = get_cached(query, location)
-    if cached:
-        return {
-            "results": cached,
-            "leads": cached,
-            "count": len(cached),
-            "status": "success",
-            "mode": "cache",
-        }
+    # Check cache (wrapped for safety - cache failures shouldn't break search)
+    try:
+        cached = get_cached(query, location)
+        if cached:
+            return {
+                "results": cached,
+                "leads": cached,
+                "count": len(cached),
+                "status": "success",
+                "mode": "cache",
+            }
+    except Exception as e:
+        logger.error(f"Cache read failed (proceeding without cache): {e}")
+        cached = None
 
     try:
         queries = generate_high_recall_queries(query, location)
@@ -114,8 +119,12 @@ async def search(query: str, location: str = "Kenya") -> Dict[str, Any]:
         if leads:
             logger.warning(f"[SEARCH DEBUG] First lead: {leads[0] if isinstance(leads, list) else 'not list'}")
 
+        # Cache results (wrapped for safety)
         if leads:
-            set_cached(query, leads, location)
+            try:
+                set_cached(query, leads, location)
+            except Exception as e:
+                logger.error(f"Cache write failed (results still returned): {e}")
 
         result = {
             "results": leads,

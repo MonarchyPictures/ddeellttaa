@@ -84,18 +84,22 @@ async def run_fast_search(
     timeout = timeout or SEARCH_CONFIG.FAST_TIMEOUT_SECONDS
     intent_threshold = get_intent_threshold("fast")
     
-    # Check cache
-    cached = get_cached(query, location)
-    if cached:
-        logger.info(f"⚡ CACHE HIT: '{query}' (<50ms)")
-        return {
-            "leads": cached.get("leads", []),
-            "count": cached.get("count", 0),
-            "calls_made": 0,
-            "duration_seconds": 0,
-            "intent_threshold": intent_threshold,
-            "cached": True
-        }
+    # Check cache (wrapped for safety - cache failures shouldn't break search)
+    try:
+        cached = get_cached(query, location)
+        if cached:
+            logger.info(f"⚡ CACHE HIT: '{query}' (<50ms)")
+            return {
+                "leads": cached.get("leads", []),
+                "count": cached.get("count", 0),
+                "calls_made": 0,
+                "duration_seconds": 0,
+                "intent_threshold": intent_threshold,
+                "cached": True
+            }
+    except Exception as e:
+        logger.error(f"Cache read failed (proceeding without cache): {e}")
+        cached = None
     
     # Anti-429: Get HTTP-only scrapers (no Playwright)
     fast_scrapers = get_fast_scrapers(all_scrapers)
