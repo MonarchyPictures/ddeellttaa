@@ -150,3 +150,22 @@ class SystemSetting(Base):
     key = Column(String, unique=True, index=True)
     value = Column(JSON)
     updated_at = Column(DateTime, onupdate=func.now())
+
+
+class Cache(Base):
+    """
+    🗄️ SEARCH CACHE TABLE - Stores search results to reduce API calls.
+    """
+    __tablename__ = "cache"
+
+    id = Column(Integer, primary_key=True)
+    query = Column(String, index=True)
+    location = Column(String, index=True)
+    data = Column(JSON)
+    created_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime, index=True)  # TTL for cache entries
+    
+    # Composite index for fast lookup
+    __table_args__ = (
+        UniqueConstraint('query', 'location', name='uix_cache_query_location'),
+    )
