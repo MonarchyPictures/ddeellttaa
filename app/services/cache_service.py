@@ -80,6 +80,8 @@ class RedisCache:
                 conn.close()
 
     def _sqlite_get(self, key: str) -> Optional[Any]:
+        # Ensure table exists before querying
+        self._init_sqlite_fallback()
         now = int(time.time())
         with self._sqlite_lock:
             conn = sqlite3.connect(self.fallback_db_path)
@@ -97,6 +99,8 @@ class RedisCache:
             return None
 
     def _sqlite_set(self, key: str, value: Any, ttl_seconds: int = 300):
+        # Ensure table exists before inserting
+        self._init_sqlite_fallback()
         expires_at = int(time.time()) + max(1, int(ttl_seconds))
         payload = json.dumps(value)
         with self._sqlite_lock:
@@ -120,70 +124,78 @@ class RedisCache:
                 conn.close()
 
     def get(self, key: str) -> Optional[Any]:
-        if self.enabled:
-            try:
-                data = self.client.get(key)
-                if data:
-                    return json.loads(data)
-            except Exception as e:
-                logger.error(f"Redis GET error: {e}")
-                self.enabled = False
-                if not self._shared_db_enabled:
-                    self._init_shared_db_fallback()
+        try:
+            if self.enabled:
+                try:
+                    data = self.client.get(key)
+                    if data:
+                        return json.loads(data)
+                except Exception as e:
+                    logger.error(f"Redis GET error: {e}")
+                    self.enabled = False
+                    if not self._shared_db_enabled:
+                        self._init_shared_db_fallback()
 
-        if self._shared_db_enabled:
-            now = int(time.time())
-            try:
-                with self._shared_db_engine.begin() as conn:
-                    conn.execute(text("DELETE FROM app_cache WHERE expires_at <= :now"), {"now": now})
-                    row = conn.execute(
-                        text("SELECT v FROM app_cache WHERE k = :k"),
-                        {"k": key},
-                    ).fetchone()
-                if row and row[0]:
-                    return json.loads(row[0])
-            except Exception as e:
-                logger.error(f"Shared DB cache GET error: {e}")
-                self._shared_db_enabled = False
-                self._init_sqlite_fallback()
-        
-        return self._sqlite_get(key)
+            if self._shared_db_enabled:
+                now = int(time.time())
+                try:
+                    with self._shared_db_engine.begin() as conn:
+                        conn.execute(text("DELETE FROM app_cache WHERE expires_at <= :now"), {"now": now})
+                        row = conn.execute(
+                            text("SELECT v FROM app_cache WHERE k = :k"),
+                            {"k": key},
+                        ).fetchone()
+                    if row and row[0]:
+                        return json.loads(row[0])
+                except Exception as e:
+                    logger.error(f"Shared DB cache GET error: {e}")
+                    self._shared_db_enabled = False
+                    self._init_sqlite_fallback()
+            
+            return self._sqlite_get(key)
+        except Exception as e:
+            logger.error(f"Cache GET failed completely: {e}")
+            return None  # Don't break the search if cache fails
 
     def set(self, key: str, value: Any, ttl_seconds: int = 300):
-        if self.enabled:
-            try:
-                self.client.setex(key, timedelta(seconds=ttl_seconds), json.dumps(value))
-                return
-            except Exception as e:
-                logger.error(f"Redis SET error: {e}")
-                self.enabled = False
-                if not self._shared_db_enabled:
-                    self._init_shared_db_fallback()
+        try:
+            if self.enabled:
+                try:
+                    self.client.setex(key, timedelta(seconds=ttl_seconds), json.dumps(value))
+                    return
+                except Exception as e:
+                    logger.error(f"Redis SET error: {e}")
+                    self.enabled = False
+                    if not self._shared_db_enabled:
+                        self._init_shared_db_fallback()
 
-        if self._shared_db_enabled:
-            try:
-                payload = json.dumps(value)
-                expires_at = int(time.time()) + max(1, int(ttl_seconds))
-                with self._shared_db_engine.begin() as conn:
-                    conn.execute(
-                        text(
-                            """
-                            INSERT INTO app_cache (k, v, expires_at)
-                            VALUES (:k, :v, :expires_at)
-                            ON CONFLICT(k) DO UPDATE SET
-                                v = excluded.v,
-                                expires_at = excluded.expires_at
-                            """
-                        ),
-                        {"k": key, "v": payload, "expires_at": expires_at},
-                    )
-                return
-            except Exception as e:
-                logger.error(f"Shared DB cache SET error: {e}")
-                self._shared_db_enabled = False
-                self._init_sqlite_fallback()
-        
-        self._sqlite_set(key, value, ttl_seconds)
+            if self._shared_db_enabled:
+                try:
+                    payload = json.dumps(value)
+                    expires_at = int(time.time()) + max(1, int(ttl_seconds))
+                    with self._shared_db_engine.begin() as conn:
+                        conn.execute(
+                            text(
+                                """
+                                INSERT INTO app_cache (k, v, expires_at)
+                                VALUES (:k, :v, :expires_at)
+                                ON CONFLICT(k) DO UPDATE SET
+                                    v = excluded.v,
+                                    expires_at = excluded.expires_at
+                                """
+                            ),
+                            {"k": key, "v": payload, "expires_at": expires_at},
+                        )
+                    return
+                except Exception as e:
+                    logger.error(f"Shared DB cache SET error: {e}")
+                    self._shared_db_enabled = False
+                    self._init_sqlite_fallback()
+            
+            self._sqlite_set(key, value, ttl_seconds)
+        except Exception as e:
+            logger.error(f"Cache SET failed completely: {e}")
+            # Don't break the search if cache fails
 
     def delete(self, key: str):
         if self.enabled:
