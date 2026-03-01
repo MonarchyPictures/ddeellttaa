@@ -159,13 +159,13 @@ class Cache(Base):
     __tablename__ = "cache"
 
     id = Column(Integer, primary_key=True)
-    query = Column(String, index=True)
-    location = Column(String, index=True)
-    data = Column(JSON)
+    query = Column(String, index=True)  # Cache key (query:location)
+    location = Column(String, default="default")
+    data = Column(JSON)  # Cached results
     created_at = Column(DateTime, server_default=func.now())
     expires_at = Column(DateTime, index=True)  # TTL for cache entries
     
-    # Composite index for fast lookup
+    # Index for fast lookup by query
     __table_args__ = (
-        UniqueConstraint('query', 'location', name='uix_cache_query_location'),
+        UniqueConstraint('query', name='uix_cache_query'),
     )
