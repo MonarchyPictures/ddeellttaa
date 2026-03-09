@@ -31,7 +31,7 @@ class Agent(Base):
     def initialize_schedule(self):
         now = datetime.utcnow()
         self.start_time = now
-        self.end_time = now + timedelta(days=self.duration_days)
+        self.end_time = now + timedelta(days=int(self.duration_days or 7))
         self.next_run_at = now
 
     def to_dict(self):
@@ -42,9 +42,9 @@ class Agent(Base):
             "location": self.location,
             "interval_hours": self.interval_hours,
             "duration_days": self.duration_days,
-            "start_time": self.start_time.isoformat() if self.start_time else None,
-            "end_time": self.end_time.isoformat() if self.end_time else None,
-            "next_run_at": self.next_run_at.isoformat() if self.next_run_at else None,
-            "active": self.active,
-            "created_at": self.created_at.isoformat() if self.created_at else None
+            "start_time": self.start_time.isoformat() if self.start_time is not None else None,
+            "end_time": self.end_time.isoformat() if self.end_time is not None else None,
+            "next_run_at": self.next_run_at.isoformat() if self.next_run_at is not None else None,
+            "active": bool(self.active) if self.active is not None else True,
+            "created_at": self.created_at.isoformat() if self.created_at is not None else None
         }

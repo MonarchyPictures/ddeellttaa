@@ -57,10 +57,10 @@ def daily_intelligence_digest(db: Session) -> Dict[str, Any]:
     high_demand = aggregate_by_product(leads)
     
     # 🚨 Urgent Requests
-    urgent = [l.to_dict() for l in leads if l.urgency_level == "high"]
+    urgent = [l.to_dict() for l in leads if l.urgency_level == "high"]  # type: ignore
     
     # 💰 High Intent Opportunities
-    high_intent = [l.to_dict() for l in leads if l.intent_score >= 0.85]
+    high_intent = [l.to_dict() for l in leads if l.intent_score >= 0.85]  # type: ignore
 
     logger.info(f"DIGEST GENERATED: {len(hot_deals)} deals, {len(urgent)} urgent, {len(high_intent)} high intent.")
 

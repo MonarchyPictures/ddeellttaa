@@ -1,0 +1,27 @@
+# DELTA 9 - Development Override
+# Use this for local development with hot reload
+
+version: '3.8'
+
+services:
+  api:
+    build:
+      target: production  # Use production but override command
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app:ro  # Mount code for hot reload
+      - ./logs:/app/logs
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"
+      LOG_LEVEL: DEBUG
+      DATABASE_ECHO: "true"
+
+  worker:
+    command: celery -A app.core.celery_app worker --loglevel=debug --concurrency=1
+    volumes:
+      - ./app:/app/app:ro
+      - ./logs:/app/logs
+    environment:
+      ENVIRONMENT: development
+      DEBUG: "true"

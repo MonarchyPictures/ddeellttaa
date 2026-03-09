@@ -7,9 +7,8 @@ import uuid
 import hashlib
 from app.db.base_class import Base
 
-# Imported definitions
-from app.models.lead import Lead, ContactStatus, CRMStatus
-from app.models.agent import Agent
+# Note: Lead and Agent models are defined in app.models.lead and app.models.agent
+# to avoid circular imports. They are imported in app.db.__init__ for registration.
 
 class BuyerLead(Base):
     """

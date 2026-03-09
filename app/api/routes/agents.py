@@ -39,14 +39,23 @@ def enrich_agent_data(agent: Agent, db: Session) -> AgentResponse:
     
     # Create response object manually to inject extra fields
     agent_dict = agent.to_dict()
-    agent_dict['id'] = uuid.UUID(agent_dict['id'])
-    agent_dict['leads_count'] = leads_count
-    agent_dict['high_intent_count'] = high_intent_count
-    agent_dict['last_run'] = last_run
-    agent_dict['execution_status'] = exec_status
-    agent_dict['is_running'] = agent.is_running
-    
-    return agent_dict
+    return AgentResponse(
+        id=uuid.UUID(agent_dict['id']),
+        name=agent_dict['name'],
+        query=agent_dict['query'],
+        location=agent_dict['location'],
+        interval_hours=agent_dict['interval_hours'],
+        duration_days=agent_dict['duration_days'],
+        start_time=agent_dict.get('start_time'),
+        end_time=agent_dict.get('end_time'),
+        next_run_at=agent_dict.get('next_run_at'),
+        active=agent_dict.get('active', True),
+        is_running=bool(agent.is_running) if agent.is_running is not None else False,
+        leads_count=leads_count,
+        high_intent_count=high_intent_count,
+        last_run=last_run,
+        execution_status=exec_status
+    )
 
 
 @router.get("/", response_model=List[AgentResponse])
@@ -250,7 +259,7 @@ def stop_agent(agent_id: str, db: Session = Depends(get_db)):
     if not agent:
         return JSONResponse(status_code=404, content={"status": "error", "message": "Agent not found"})
         
-    agent.active = False
+    agent.active = False  # type: ignore
     db.commit()
     
     return {"status": "success", "message": f"Agent {agent.name} stopped."}
@@ -285,7 +294,7 @@ def export_agent_leads_internal(agent_id: str, db: Session):
         output.write(f"Date: {lead.created_at}\n")
         output.write(f"Lead: {lead.title or lead.description}\n")
         output.write(f"URL: {lead.source_url}\n")
-        contact = lead.contact_info.get('phone') if lead.contact_info else "N/A"
+        contact = lead.contact_phone or lead.whatsapp_link or "N/A"
         output.write(f"Contact: {contact}\n")
         output.write("-" * 30 + "\n")
 

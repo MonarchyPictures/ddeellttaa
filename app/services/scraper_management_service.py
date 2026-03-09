@@ -2,6 +2,7 @@ from app.scrapers.registry import SCRAPER_REGISTRY, ACTIVE_SCRAPERS, update_scra
 from app.scrapers.metrics import get_metrics, SCRAPER_METRICS
 from app.config.scrapers import is_scraper_allowed
 from datetime import datetime
+from typing import Optional
 
 def list_all_scrapers():
     """List all scrapers with their current configuration and metrics."""
@@ -78,7 +79,7 @@ def promote_scraper_to_prod(name: str, caller: str):
         return {"status": "error", "message": message}
     return {"status": "success", "scraper": name, "mode": "production"}
 
-def enable_scraper_service(name: str, ttl: int, caller: str):
+def enable_scraper_service(name: str, ttl: Optional[int], caller: str):
     success, message = update_scraper_state(name, True, ttl_minutes=ttl, caller=caller)
     if not success:
         return {"status": "error", "message": message}

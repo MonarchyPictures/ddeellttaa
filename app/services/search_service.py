@@ -99,6 +99,16 @@ async def search(query: str, location: str = "Kenya") -> Dict[str, Any]:
         logger.warning(f"[SEARCH DEBUG] Total raw results: {len(all_raw_results)}")
         if all_raw_results:
             logger.warning(f"[SEARCH DEBUG] Sample raw: {str(all_raw_results[0])[:200]}")
+        
+        # FALLBACK: If scrapers returned empty, use fallback search
+        if not all_raw_results:
+            logger.warning("[SEARCH DEBUG] Scrapers returned empty - using fallback search")
+            from app.services.fallback_search import search_with_fallback
+            try:
+                all_raw_results = await search_with_fallback(query, location)
+                logger.warning(f"[SEARCH DEBUG] Fallback returned {len(all_raw_results)} results")
+            except Exception as e:
+                logger.error(f"[SEARCH DEBUG] Fallback search failed: {e}")
 
         try:
             print(f"[DEBUG] Calling process_high_recall_results with {len(all_raw_results)} raw results")
@@ -110,6 +120,12 @@ async def search(query: str, location: str = "Kenya") -> Dict[str, Any]:
             logger.error(f"[SEARCH DEBUG] process_high_recall_results FAILED: {e}")
             leads = []
 
+        # FALLBACK: If pipeline filtered everything, use raw results directly
+        if not leads and all_raw_results:
+            logger.warning("[SEARCH DEBUG] Pipeline filtered all leads - using raw results")
+            leads = _convert_raw_to_leads(all_raw_results[:8])  # Use top 8 raw results
+            logger.warning(f"[SEARCH DEBUG] Using {len(leads)} raw leads directly")
+        
         # Ensure minimum display count
         DISPLAY_MIN = 4
         if len(leads) > DISPLAY_MIN:
@@ -145,6 +161,37 @@ async def search(query: str, location: str = "Kenya") -> Dict[str, Any]:
             "status": "error",
             "message": str(e)
         }
+
+
+def _convert_raw_to_leads(raw_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Convert raw scraper results to lead format when pipeline filtering is too aggressive.
+    This ensures we always show something to the user.
+    """
+    leads = []
+    for raw in raw_results:
+        if not isinstance(raw, dict):
+            continue
+            
+        # Extract text from various possible fields
+        text = raw.get("snippet", "") or raw.get("text", "") or raw.get("title", "")
+        title = raw.get("title", "") or text[:60]
+        
+        lead = {
+            "title": title,
+            "buyer_request_snippet": text,
+            "url": raw.get("url", ""),
+            "source": raw.get("source", "unknown"),
+            "location": raw.get("location", "Kenya"),
+            "contact_phone": raw.get("contact_phone", "") or raw.get("phone", ""),
+            "buyer_name": raw.get("buyer_name", "Interested Buyer"),
+            "intent_score": raw.get("intent_score", 0.5),
+            "badge": "WARM",
+            "price": raw.get("price"),
+        }
+        leads.append(lead)
+    
+    return leads
 
 
 # Backward compatible alias

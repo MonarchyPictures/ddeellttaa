@@ -113,10 +113,10 @@ class BuyerBehaviorEngine:
 
         # Finalize profile attributes
         if interest_counts:
-            profile.interest_type = max(interest_counts, key=interest_counts.get)
+            profile.interest_type = max(interest_counts.items(), key=lambda x: x[1])[0]
             
         if locations:
-            profile.location = max(locations, key=locations.get)
+            profile.location = max(locations.items(), key=lambda x: x[1])[0]
             
         if urgency_count > 0:
             profile.urgency = min(1.0, total_urgency / urgency_count)

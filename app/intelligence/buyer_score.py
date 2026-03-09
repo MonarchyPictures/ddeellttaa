@@ -13,9 +13,9 @@ def buyer_score(lead):
 
     # Freshness
     hours_since_post = lead.get('hours_since_post') if isinstance(lead, dict) else getattr(lead, 'hours_since_post', 99)
-    if hours_since_post <= 6:
+    if hours_since_post is not None and hours_since_post <= 6:
         score += 0.3
-    elif hours_since_post <= 24:
+    elif hours_since_post is not None and hours_since_post <= 24:
         score += 0.2
 
     # Contact availability

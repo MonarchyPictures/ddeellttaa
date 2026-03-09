@@ -253,7 +253,7 @@ class Lead(Base):
             "source": self.source,
             "url": self.url,
             "intent_score": self.intent_score,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "created_at": self.created_at.isoformat() if self.created_at is not None else None,
             
             # Mapped/Computed fields
             "query": self.title, # Frontend expects 'query' or 'product'

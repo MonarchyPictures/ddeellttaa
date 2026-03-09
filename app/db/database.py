@@ -1,53 +1,109 @@
-from sqlalchemy import create_engine, event
-from sqlalchemy.orm import sessionmaker
-import os
+"""
+Database connection and session management.
 
-# PostgreSQL is REQUIRED in production (Railway provides this)
-# Local development can use: export DATABASE_URL="sqlite:///./local.db"
-DATABASE_URL = os.getenv("DATABASE_URL")
+Provides SQLAlchemy engine and session factory with proper configuration.
+Optimized for PostgreSQL with connection pooling.
+"""
 
-if not DATABASE_URL:
-    raise RuntimeError(
-        "DATABASE_URL environment variable is required. "
-        "In Railway, add a Postgres plugin. "
-        "For local dev: export DATABASE_URL='sqlite:///./local.db'"
-    )
+from contextlib import contextmanager
+from typing import Generator
 
-# Render/Heroku fix: SQLAlchemy requires 'postgresql://' instead of 'postgres://'
-if DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.pool import NullPool
 
-# Connection args
-if "sqlite" in DATABASE_URL:
-    # SQLite-specific config for local testing only
-    connect_args = {"check_same_thread": False}
-    engine_args = {
-        "pool_pre_ping": True,
-        "pool_recycle": 1800
+from app.core.config import settings
+from app.core.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+
+def create_engine_with_config():
+    """Create SQLAlchemy engine with appropriate configuration."""
+    
+    # Base engine arguments
+    engine_kwargs = {
+        "pool_pre_ping": True,  # Verify connections before using
+        "echo": settings.DATABASE_ECHO,
     }
-else:
-    # PostgreSQL-specific config for production
-    connect_args = {"options": "-c statement_timeout=30000"}  # 30s statement timeout
-    engine_args = {
-        "pool_pre_ping": True,
-        "pool_recycle": 1800,  # Recycle every 30 mins
-        "pool_size": 10,       # Safe size for Railway
-        "max_overflow": 5
-    }
+    
+    # PostgreSQL-specific configuration
+    if settings.DATABASE_URL.startswith("postgresql"):
+        engine_kwargs.update({
+            "pool_size": settings.DATABASE_POOL_SIZE,
+            "max_overflow": settings.DATABASE_MAX_OVERFLOW,
+            "pool_recycle": 3600,  # Recycle connections after 1 hour
+            "pool_timeout": 30,    # Timeout for getting connection from pool
+        })
+    else:
+        # SQLite configuration (for development/testing)
+        engine_kwargs["poolclass"] = NullPool
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+    
+    return create_engine(settings.DATABASE_URL, **engine_kwargs)
 
-# Create Engine with Pool Settings
-# pool_pre_ping=True handles "database has gone away" errors
-engine = create_engine(
-    DATABASE_URL, 
-    connect_args=connect_args,
-    **engine_args
-)
 
+# Create the engine
+engine = create_engine_with_config()
+
+# Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-def get_db():
+
+def get_db() -> Generator[Session, None, None]:
+    """
+    Dependency for FastAPI to get database sessions.
+    
+    Yields a database session and ensures it's closed after use.
+    """
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+@contextmanager
+def get_db_context() -> Generator[Session, None, None]:
+    """
+    Context manager for database sessions.
+    
+    Use this when you need a database session outside of FastAPI's
+    dependency injection (e.g., in background tasks).
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception as e:
+        db.rollback()
+        logger.error("Database error", extra={"error": str(e)})
+        raise
+    finally:
+        db.close()
+
+
+def init_db() -> None:
+    """
+    Initialize the database by creating all tables.
+    
+    Note: In production, use Alembic migrations instead of this.
+    """
+    from app.db.base_class import Base
+    
+    # Import all models to ensure they're registered
+    import app.models  # noqa: F401
+    
+    logger.info("Creating database tables...")
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created")
+
+
+def check_db_connection() -> bool:
+    """Check if database connection is working."""
+    try:
+        with engine.connect() as conn:
+            conn.execute("SELECT 1")
+        return True
+    except Exception as e:
+        logger.error("Database connection failed", extra={"error": str(e)})
+        return False

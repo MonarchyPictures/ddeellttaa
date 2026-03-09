@@ -176,16 +176,16 @@ async def run_scraper_group(scrapers, query: str, location: str, max_concurrent:
         logger.warning(f"[DEBUG] Calling {scraper_name}.search('{query[:30]}...')")
         
         try:
-            # HARD 5-second timeout per scraper
+            # INCREASED timeout: 15 seconds per scraper (was 5s, too aggressive)
             if hasattr(scraper, "search"):
                 result = await asyncio.wait_for(
                     scraper.search(query, location),
-                    timeout=5
+                    timeout=15
                 )
             elif hasattr(scraper, "scrape"):
                 result = await asyncio.wait_for(
                     asyncio.to_thread(scraper.scrape, query, location),
-                    timeout=5
+                    timeout=15
                 )
             else:
                 logger.warning(f"[SCRAPER ERROR] {type(scraper).__name__} has no method")
@@ -205,7 +205,7 @@ async def run_scraper_group(scrapers, query: str, location: str, max_concurrent:
             return result
 
         except asyncio.TimeoutError:
-            logger.warning(f"[TIMEOUT] {type(scraper).__name__} exceeded 5s")
+            logger.warning(f"[TIMEOUT] {type(scraper).__name__} exceeded 15s")
             return []
 
         except Exception as e:

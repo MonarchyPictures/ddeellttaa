@@ -14,10 +14,12 @@ from app.db.models import (
     SystemSetting,
     Cache,
 )
-from app.models.lead import Lead, ContactStatus, CRMStatus
-from app.models.agent import Agent
 
-# All models are now imported and registered with Base.metadata
+# Note: Lead and Agent models are defined in app.models.lead and app.models.agent
+# Import them directly from there to avoid circular imports:
+#   from app.models.lead import Lead
+#   from app.models.agent import Agent
+
 __all__ = [
     "Base",
     "BuyerLead",
@@ -29,8 +31,4 @@ __all__ = [
     "CategoryMetric",
     "SystemSetting",
     "Cache",
-    "Lead",
-    "ContactStatus",
-    "CRMStatus",
-    "Agent",
 ]

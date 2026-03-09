@@ -70,7 +70,9 @@ def exponential_backoff(retries: int = 3, base_delay: float = 1.0, max_delay: fl
                     logger.warning(f"🔄 Retry {attempt + 1}/{retries} for {func.__name__} in {sleep_time:.2f}s due to: {str(e)}")
                     time.sleep(sleep_time)
             
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Unexpected error in exponential backoff")
         return wrapper
     return decorator
 

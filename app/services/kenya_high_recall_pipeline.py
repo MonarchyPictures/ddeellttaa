@@ -439,18 +439,20 @@ def _generate_basic_queries(product: str, location: str) -> List[str]:
     OPTIMIZED: Generate only 2 high-value queries for Kenya.
     
     Strategy:
-    1. High-recall buyer signal query (covers all buyer verbs)
-    2. Site-filter query for high-intent platforms
+    1. Simple buyer signal query (works with all search engines including DDG)
+    2. Location-focused query
     
     Result: 2 queries × 5 scrapers = 10 calls ≈ 9-12 seconds
     (Was: 42 queries × 14 scrapers = 588 calls ≈ 60+ seconds)
     """
+    # SIMPLIFIED: Removed complex site: filters that DDG doesn't handle well
+    # Removed complex OR chains that can confuse search engines
     queries = [
-        # Query 1: High-recall buyer signal (covers all buyer verbs in one)
-        f'"{product}" "{location}" (natafuta OR nahitaji OR "looking for" OR need OR wtb)',
+        # Query 1: Simple buyer-focused query
+        f'{product} looking for {location}',
         
-        # Query 2: Site-filter for high-intent platforms
-        f'site:facebook.com "{product}" "{location}" (natafuta OR "looking for" OR need)',
+        # Query 2: Swahili buyer query (very effective in Kenya)
+        f'{product} natafuta {location}',
     ]
     
     return queries

@@ -79,7 +79,7 @@ class TelegramService:
     async def search_buyers(
         self,
         query: str,
-        category: str = None,
+        category: Optional[str] = None,
         hours_back: int = 24,
         max_groups: int = 15
     ) -> List[Dict]:
