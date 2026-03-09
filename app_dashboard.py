@@ -20,12 +20,16 @@ os.environ['PYTHONIOENCODING'] = 'utf-8'
 os.environ['ENVIRONMENT'] = 'development'
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from enum import Enum
 import uvicorn
 
 app = FastAPI(title="Delta 9 Dashboard", version="3.0.0")
+
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # ============================================================================
 # DATA MODELS
@@ -531,8 +535,19 @@ notifications_db: List[Notification] = []
 # API ENDPOINTS
 # ============================================================================
 
-@app.get("/")
-def root():
+@app.get("/", response_class=HTMLResponse)
+def landing_page():
+    """Landing page - the entry point to Delta 9"""
+    try:
+        with open("static/landing.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except FileNotFoundError:
+        # Fallback if landing.html doesn't exist
+        return generate_landing_page()
+
+@app.get("/api")
+def api_root():
+    """API info endpoint"""
     return {"message": "Delta 9 Dashboard API", "version": "3.0.0"}
 
 @app.get("/api/agents")
@@ -711,6 +726,285 @@ def test_notification():
     )
     notifications_db.insert(0, notif)
     return notif
+
+# ============================================================================
+# LANDING PAGE GENERATOR (Fallback)
+# ============================================================================
+
+def generate_landing_page():
+    """Generate the landing page HTML inline as fallback"""
+    return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delta 9 - AI Buyer Discovery Engine</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            --bg-primary: #0f172a;
+            --accent-gold: #fbbf24;
+            --accent-cyan: #06b6d4;
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+        }
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            min-height: 100vh;
+            overflow: hidden;
+            position: relative;
+        }
+        .bg-effects {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 0;
+        }
+        .radar-container {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 800px; height: 800px;
+        }
+        .radar-circle {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            border: 1px solid rgba(6, 182, 212, 0.1);
+            border-radius: 50%;
+            animation: pulse-ring 4s ease-out infinite;
+        }
+        .radar-circle:nth-child(1) { width: 200px; height: 200px; animation-delay: 0s; }
+        .radar-circle:nth-child(2) { width: 400px; height: 400px; animation-delay: 1s; }
+        .radar-circle:nth-child(3) { width: 600px; height: 600px; animation-delay: 2s; }
+        .radar-circle:nth-child(4) { width: 800px; height: 800px; animation-delay: 3s; }
+        @keyframes pulse-ring {
+            0% { transform: translate(-50%, -50%) scale(0.8); opacity: 1; border-color: rgba(6, 182, 212, 0.3); }
+            100% { transform: translate(-50%, -50%) scale(1.2); opacity: 0; border-color: rgba(6, 182, 212, 0); }
+        }
+        .radar-sweep {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 400px; height: 400px;
+            transform: translate(-50%, -50%);
+            background: conic-gradient(from 0deg, transparent 0deg, rgba(6, 182, 212, 0.1) 30deg, rgba(6, 182, 212, 0.3) 60deg, transparent 90deg);
+            border-radius: 50%;
+            animation: radar-spin 4s linear infinite;
+        }
+        @keyframes radar-spin {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        .network-grid {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-image: linear-gradient(rgba(59, 130, 246, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(59, 130, 246, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: grid-move 20s linear infinite;
+        }
+        @keyframes grid-move {
+            0% { transform: perspective(500px) rotateX(60deg) translateY(0); }
+            100% { transform: perspective(500px) rotateX(60deg) translateY(50px); }
+        }
+        .particles {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+        }
+        .particle {
+            position: absolute;
+            width: 4px; height: 4px;
+            background: var(--accent-cyan);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--accent-cyan), 0 0 20px var(--accent-cyan);
+            animation: float-particle 15s infinite ease-in-out;
+        }
+        @keyframes float-particle {
+            0%, 100% { transform: translateY(100vh) scale(0); opacity: 0; }
+            10% { opacity: 1; }
+            90% { opacity: 1; }
+            100% { transform: translateY(-100px) scale(1); opacity: 0; }
+        }
+        .landing-container {
+            position: relative;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .logo-section {
+            text-align: center;
+            animation: fade-in-up 1.5s ease-out;
+        }
+        @keyframes fade-in-up {
+            0% { opacity: 0; transform: translateY(30px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        .logo-container {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 30px;
+        }
+        .logo-glow {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            width: 300px; height: 300px;
+            background: radial-gradient(circle, rgba(251, 191, 36, 0.2) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: glow-pulse 3s ease-in-out infinite;
+        }
+        @keyframes glow-pulse {
+            0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+            50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+        }
+        .logo-image {
+            width: 280px;
+            height: auto;
+            filter: drop-shadow(0 0 30px rgba(251, 191, 36, 0.3));
+            position: relative;
+            z-index: 2;
+        }
+        .brand-name {
+            font-size: 64px;
+            font-weight: 900;
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 50%, #d97706 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 4px;
+            margin-bottom: 10px;
+            text-shadow: 0 0 40px rgba(251, 191, 36, 0.3);
+        }
+        .brand-tagline {
+            font-size: 20px;
+            color: var(--text-secondary);
+            letter-spacing: 8px;
+            text-transform: uppercase;
+            margin-bottom: 60px;
+        }
+        .enter-button {
+            position: relative;
+            padding: 20px 80px;
+            font-size: 24px;
+            font-weight: 700;
+            letter-spacing: 4px;
+            color: var(--bg-primary);
+            background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 40px rgba(251, 191, 36, 0.3);
+            overflow: hidden;
+            animation: fade-in-up 1.5s ease-out 0.5s both;
+        }
+        .enter-button::before {
+            content: '';
+            position: absolute;
+            top: 0; left: -100%;
+            width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s ease;
+        }
+        .enter-button:hover::before {
+            left: 100%;
+        }
+        .enter-button:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 20px 60px rgba(251, 191, 36, 0.4), 0 0 40px rgba(251, 191, 36, 0.2), inset 0 0 20px rgba(255, 255, 255, 0.1);
+        }
+        .corner-decoration {
+            position: fixed;
+            width: 200px; height: 200px;
+            border: 1px solid rgba(6, 182, 212, 0.2);
+            pointer-events: none;
+        }
+        .corner-decoration.top-left { top: 20px; left: 20px; border-right: none; border-bottom: none; }
+        .corner-decoration.top-right { top: 20px; right: 20px; border-left: none; border-bottom: none; }
+        .corner-decoration.bottom-left { bottom: 20px; left: 20px; border-right: none; border-top: none; }
+        .corner-decoration.bottom-right { bottom: 20px; right: 20px; border-left: none; border-top: none; }
+        @media (max-width: 768px) {
+            .logo-image { width: 200px; }
+            .brand-name { font-size: 42px; }
+            .brand-tagline { font-size: 14px; letter-spacing: 4px; }
+            .enter-button { padding: 16px 60px; font-size: 18px; }
+            .radar-container { width: 400px; height: 400px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-effects">
+        <div class="radar-container">
+            <div class="radar-sweep"></div>
+            <div class="radar-circle"></div>
+            <div class="radar-circle"></div>
+            <div class="radar-circle"></div>
+            <div class="radar-circle"></div>
+        </div>
+        <div class="network-grid"></div>
+        <div class="particles" id="particles"></div>
+    </div>
+    <div class="corner-decoration top-left"></div>
+    <div class="corner-decoration top-right"></div>
+    <div class="corner-decoration bottom-left"></div>
+    <div class="corner-decoration bottom-right"></div>
+    <div class="landing-container">
+        <div class="logo-section">
+            <div class="logo-container">
+                <div class="logo-glow"></div>
+                <svg class="logo-image" viewBox="0 0 200 200" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M100 10 L170 40 L170 100 C170 150 100 190 100 190 C100 190 30 150 30 100 L30 40 Z" fill="url(#shieldGradient)" stroke="#fbbf24" stroke-width="3"/>
+                    <path d="M70 60 Q70 30 100 30 Q130 30 130 60 L130 90 L70 90 Z" fill="#1e293b" stroke="#94a3b8" stroke-width="2"/>
+                    <rect x="75" y="50" width="50" height="15" rx="3" fill="#0f172a"/>
+                    <line x1="80" y1="57" x2="120" y2="57" stroke="#fbbf24" stroke-width="2"/>
+                    <path d="M140 40 L160 20 L165 25 L145 45 Z" fill="#94a3b8"/>
+                    <rect x="142" y="42" width="4" height="40" fill="#64748b"/>
+                    <circle cx="144" cy="85" r="5" fill="#fbbf24"/>
+                    <path d="M85 30 Q70 10 60 25 Q65 5 80 15 Q75 0 90 10" stroke="#dc2626" stroke-width="4" fill="none" stroke-linecap="round"/>
+                    <text x="100" y="140" text-anchor="middle" fill="#fbbf24" font-size="28" font-weight="900" font-family="Arial, sans-serif" letter-spacing="2">DELTA 9</text>
+                    <defs>
+                        <linearGradient id="shieldGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
+                            <stop offset="100%" style="stop-color:#0f172a;stop-opacity:1" />
+                        </linearGradient>
+                    </defs>
+                </svg>
+            </div>
+            <h1 class="brand-name">Delta 9</h1>
+            <p class="brand-tagline">AI Buyer Discovery Engine</p>
+            <button class="enter-button" onclick="enterApp()">Enter</button>
+        </div>
+    </div>
+    <script>
+        function createParticles() {
+            const container = document.getElementById("particles");
+            for (let i = 0; i < 30; i++) {
+                const particle = document.createElement("div");
+                particle.className = "particle";
+                particle.style.left = Math.random() * 100 + "%";
+                particle.style.animationDelay = Math.random() * 15 + "s";
+                particle.style.animationDuration = (10 + Math.random() * 10) + "s";
+                const colors = ["#06b6d4", "#fbbf24", "#3b82f6"];
+                particle.style.background = colors[Math.floor(Math.random() * colors.length)];
+                container.appendChild(particle);
+            }
+        }
+        function enterApp() {
+            document.body.style.transition = "opacity 0.5s ease";
+            document.body.style.opacity = "0";
+            setTimeout(() => { window.location.href = "/dashboard"; }, 500);
+        }
+        createParticles();
+    </script>
+</body>
+</html>'''
 
 # ============================================================================
 # DASHBOARD UI
