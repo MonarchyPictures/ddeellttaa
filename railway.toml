@@ -2,5 +2,7 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "uvicorn app_dashboard:app --host 0.0.0.0 --port 8000"
+startCommand = "python app_dashboard.py"
 restartPolicyType = "on_failure"
+healthcheckPath = "/"
+healthcheckTimeout = 30

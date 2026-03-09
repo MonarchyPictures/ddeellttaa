@@ -3056,13 +3056,20 @@ def generate_full_dashboard():
 """
 
 if __name__ == "__main__":
+    # Get port from environment variable (Railway sets this) or default to 8000
+    port = int(os.environ.get("PORT", 8000))
+    host = "0.0.0.0"
+    
     print("="*60)
     print("  DELTA 9 DASHBOARD v3.0")
     print("="*60)
     print()
+    print(f"  Starting server on {host}:{port}")
+    print()
     print("  URLs:")
-    print("    http://localhost:8000/dashboard  - Full Dashboard UI")
-    print("    http://localhost:8000/docs       - API Documentation")
+    print(f"    http://{host}:{port}/           - Landing Page")
+    print(f"    http://{host}:{port}/dashboard  - Full Dashboard UI")
+    print(f"    http://{host}:{port}/docs       - API Documentation")
     print()
     print("  Features:")
     print("    Dynamic search (any query)")
@@ -3073,4 +3080,4 @@ if __name__ == "__main__":
     print()
     print("  Press CTRL+C to stop")
     print("="*60)
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
