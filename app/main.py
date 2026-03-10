@@ -9,7 +9,7 @@ app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Mount assets only if directory exists (for Railway deployment)
-if os.path.exists("frontend/dist/assets"):
+if os.path.isdir("frontend/dist/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
 
 @app.get("/", response_class=HTMLResponse)
