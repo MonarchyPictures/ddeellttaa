@@ -1,18 +1,21 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
+import os
 
 app = FastAPI()
 
-@app.get("/")
-def home():
-    return {"message": "Delta 9 running"}
+# Mount static files for images
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/", response_class=HTMLResponse)
+async def home():
+    """Serve the Delta 9 dashboard HTML"""
+    return FileResponse("static/landing.html")
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
-@app.get("/dashboard")
-def dashboard():
-    return {"dashboard": "loading"}
 
 @app.get("/api/leads")
 async def get_leads():
