@@ -550,6 +550,11 @@ def api_root():
     """API info endpoint"""
     return {"message": "Delta 9 Dashboard API", "version": "3.0.0"}
 
+@app.get("/health")
+def health():
+    """Health check for Railway"""
+    return {"status": "ok", "version": "3.0.0"}
+
 @app.get("/api/agents")
 def get_agents():
     return {"agents": list(agents_db.values())}

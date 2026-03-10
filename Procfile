@@ -1,1 +1,1 @@
-web: uvicorn app_dashboard:app --host 0.0.0.0 --port ${PORT:-8000}
+web: python main.py

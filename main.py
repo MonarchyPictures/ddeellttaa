@@ -1,13 +1,34 @@
-from app.main import app
+#!/usr/bin/env python3
+"""
+Delta 9 Dashboard - Railway Entry Point
+Simple startup file for Railway deployment
+"""
+import os
+import sys
 
-if __name__ == "__main__":
-    import uvicorn
-    import os
-    # Binds to 0.0.0.0 to fix host resolution issues
-    port = int(os.getenv("PORT", 8001))
-    uvicorn.run(
-        "app.main:app",
-        host="0.0.0.0",  # NOT 127.0.0.1
-        port=port,
-        reload=True
-    )
+# Get configuration from environment
+port = int(os.environ.get("PORT", 8000))
+host = "0.0.0.0"
+
+print("="*60)
+print("  DELTA 9 DASHBOARD v3.0")
+print("="*60)
+print(f"\n  Starting server on {host}:{port}\n")
+
+# Import the FastAPI app
+try:
+    from app_dashboard import app
+    print("  App imported successfully")
+except Exception as e:
+    print(f"  ERROR importing app: {e}")
+    sys.exit(1)
+
+# Start the server
+import uvicorn
+uvicorn.run(
+    app, 
+    host=host, 
+    port=port, 
+    log_level="info",
+    access_log=True
+)

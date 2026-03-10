@@ -2,7 +2,8 @@
 builder = "nixpacks"
 
 [deploy]
-startCommand = "python app_dashboard.py"
+startCommand = "python main.py"
 restartPolicyType = "on_failure"
 healthcheckPath = "/"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
+numReplicas = 1
