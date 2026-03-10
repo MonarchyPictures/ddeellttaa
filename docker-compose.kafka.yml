@@ -1,0 +1,181 @@
+# Delta-9 with Kafka Scaling Layer
+# For high-scale deployments (100k+ signals/day)
+#
+# Architecture:
+#   Scrapers → Kafka → AI Filters → PostgreSQL
+#
+# Run with: docker-compose -f docker-compose.kafka.yml up -d
+
+version: "3.8"
+
+services:
+  # Zookeeper (Kafka dependency)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+    networks:
+      - kafka-network
+
+  # Kafka Broker
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "9093:9093"  # External access
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      # Performance tuning
+      KAFKA_NUM_NETWORK_THREADS: 8
+      KAFKA_NUM_IO_THREADS: 16
+      KAFKA_SOCKET_SEND_BUFFER_BYTES: 102400
+      KAFKA_SOCKET_RECEIVE_BUFFER_BYTES: 102400
+      KAFKA_SOCKET_REQUEST_MAX_BYTES: 104857600
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - kafka-network
+
+  # Kafka UI (for monitoring)
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    depends_on:
+      - kafka
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: delta9-cluster
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - kafka-network
+
+  # PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: delta9
+      POSTGRES_PASSWORD: delta9pass
+      POSTGRES_DB: delta9
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - kafka-network
+
+  # Redis (for fallback and caching)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - kafka-network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.railway
+    ports:
+      - "8000:8000"
+    environment:
+      - PORT=8000
+      - ENVIRONMENT=production
+      - DEBUG=false
+      - DATABASE_URL=postgresql://delta9:delta9pass@postgres:5432/delta9
+      - REDIS_URL=redis://redis:6379/0
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+    depends_on:
+      - kafka
+      - postgres
+      - redis
+    networks:
+      - kafka-network
+
+  # Verification Workers (scalable)
+  verification-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.railway
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - DATABASE_URL=postgresql://delta9:delta9pass@postgres:5432/delta9
+    command: python -m app.workers.kafka_consumer verification --group-id verification-workers
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - kafka-network
+    deploy:
+      replicas: 2  # Scale to 2+ instances
+
+  # Intent Detection Workers (scalable)
+  intent-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.railway
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - DATABASE_URL=postgresql://delta9:delta9pass@postgres:5432/delta9
+    command: python -m app.workers.kafka_consumer intent --group-id intent-workers
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - kafka-network
+    deploy:
+      replicas: 2
+
+  # Lead Creation Workers (scalable)
+  lead-worker-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.railway
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:29092
+      - DATABASE_URL=postgresql://delta9:delta9pass@postgres:5432/delta9
+    command: python -m app.workers.kafka_consumer lead --group-id lead-workers
+    depends_on:
+      - kafka
+      - postgres
+    networks:
+      - kafka-network
+    deploy:
+      replicas: 2
+
+  # ClickHouse (for analytics at scale)
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    ports:
+      - "8123:8123"  # HTTP
+      - "9000:9000"  # Native
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+    networks:
+      - kafka-network
+
+volumes:
+  zookeeper_data:
+  kafka_data:
+  postgres_data:
+  redis_data:
+  clickhouse_data:
+
+networks:
+  kafka-network:
+    driver: bridge
