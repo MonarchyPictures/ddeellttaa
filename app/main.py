@@ -5,13 +5,19 @@ import os
 
 app = FastAPI()
 
-# Mount static files for images
+# Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    """Serve the Delta 9 dashboard HTML"""
+    """Serve the landing page"""
     return FileResponse("static/landing.html")
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """Serve the dashboard UI"""
+    return FileResponse("frontend/dist/index.html")
 
 @app.get("/health")
 def health():
