@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delta 9 - Real Lead Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #ffffff;
+            min-height: 100vh;
+        }
+
+        .header {
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #06b6d4;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #10b981;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        .search-section {
+            margin-bottom: 2rem;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            color: #ffffff;
+            font-size: 1rem;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #06b6d4;
+        }
+
+        .search-btn {
+            padding: 1rem 2rem;
+            background: #06b6d4;
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .search-btn:hover {
+            background: #0891b2;
+        }
+
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #fbbf24;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+
+        .leads-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .leads-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .last-updated {
+            color: #94a3b8;
+            font-size: 0.875rem;
+        }
+
+        .leads-list {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .lead-card {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: border-color 0.2s;
+        }
+
+        .lead-card:hover {
+            border-color: #06b6d4;
+        }
+
+        .lead-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.75rem;
+        }
+
+        .lead-platform {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+
+        .platform-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .platform-reddit { background: #ff4500; }
+        .platform-twitter { background: #1da1f2; }
+        .platform-forum { background: #6366f1; }
+
+        .lead-time {
+            font-size: 0.75rem;
+            color: #64748b;
+        }
+
+        .lead-text {
+            font-size: 1rem;
+            line-height: 1.5;
+            margin-bottom: 1rem;
+            color: #ffffff;
+        }
+
+        .lead-meta {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+            font-size: 0.875rem;
+            color: #94a3b8;
+        }
+
+        .lead-scores {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .score {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .score-intent {
+            background: rgba(6, 182, 212, 0.2);
+            color: #06b6d4;
+        }
+
+        .urgency {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .urgency-immediate { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+        .urgency-soon { background: rgba(251, 191, 36, 0.2); color: #fbbf24; }
+        .urgency-future { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: #94a3b8;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #94a3b8;
+        }
+
+        .error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid #ef4444;
+            color: #ef4444;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .no-data {
+            text-align: center;
+            padding: 3rem;
+            color: #64748b;
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="logo">⚡ Delta 9 - Real Leads</div>
+        <div class="status">
+            <span class="status-dot"></span>
+            <span>Live Feed</span>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="search-section">
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    class="search-input" 
+                    id="searchInput"
+                    placeholder="Search for leads (e.g., plumber, iphone, car)..."
+                    value="plumber"
+                >
+                <button class="search-btn" onclick="searchLeads()">Search</button>
+            </div>
+
+            <div class="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-value" id="statScanned">0</div>
+                    <div class="stat-label">Signals Scanned</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statFound">0</div>
+                    <div class="stat-label">Buyers Found</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statShown">0</div>
+                    <div class="stat-label">Showing</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="leads-header">
+            <h2 class="leads-title">Live Leads</h2>
+            <span class="last-updated" id="lastUpdated">Updating...</span>
+        </div>
+
+        <div id="leadsContainer" class="leads-list">
+            <div class="loading">Loading real leads...</div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+        const REFRESH_INTERVAL = 5000; // 5 seconds
+        let currentQuery = 'plumber';
+        let refreshTimer = null;
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchLeads();
+            startAutoRefresh();
+            
+            // Enter key to search
+            document.getElementById('searchInput').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') searchLeads();
+            });
+        });
+
+        function startAutoRefresh() {
+            refreshTimer = setInterval(fetchLeads, REFRESH_INTERVAL);
+        }
+
+        function searchLeads() {
+            const input = document.getElementById('searchInput');
+            currentQuery = input.value.trim() || 'plumber';
+            fetchLeads();
+        }
+
+        async function fetchLeads() {
+            try {
+                const response = await fetch(`${API_BASE}/leads?q=${encodeURIComponent(currentQuery)}&limit=50`);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                renderLeads(data);
+                
+            } catch (error) {
+                console.error('Error fetching leads:', error);
+                showError('Failed to fetch leads. Retrying...');
+            }
+        }
+
+        function renderLeads(data) {
+            // Update stats
+            document.getElementById('statScanned').textContent = data.signals_scanned || 0;
+            document.getElementById('statFound').textContent = data.buyers_found || 0;
+            document.getElementById('statShown').textContent = data.leads ? data.leads.length : 0;
+            document.getElementById('lastUpdated').textContent = `Updated: ${new Date().toLocaleTimeString()}`;
+
+            const container = document.getElementById('leadsContainer');
+            
+            if (!data.leads || data.leads.length === 0) {
+                container.innerHTML = `
+                    <div class="no-data">
+                        <h3>No leads found</h3>
+                        <p>No buyer intent signals detected for "${currentQuery}"</p>
+                        <p>Try a different search term or check back later.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = data.leads.map(lead => `
+                <div class="lead-card">
+                    <div class="lead-header">
+                        <div class="lead-platform">
+                            <span class="platform-badge platform-${lead.platform}">${lead.platform}</span>
+                            <span>@${lead.author}</span>
+                        </div>
+                        <span class="lead-time">${formatTime(lead.timestamp)}</span>
+                    </div>
+                    
+                    <div class="lead-text">${escapeHtml(lead.text)}</div>
+                    
+                    <div class="lead-meta">
+                        <span>📍 ${lead.location || 'Unknown'}</span>
+                        ${lead.url ? `<a href="${escapeHtml(lead.url)}" target="_blank" style="color: #06b6d4;">View Source ↗</a>` : ''}
+                    </div>
+                    
+                    <div class="lead-scores">
+                        <span class="score score-intent">Intent: ${Math.round(lead.intent_score * 100)}%</span>
+                        <span class="urgency urgency-${lead.urgency}">${lead.urgency}</span>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function showError(message) {
+            const container = document.getElementById('leadsContainer');
+            container.innerHTML = `<div class="error">${message}</div>`;
+        }
+
+        function formatTime(timestamp) {
+            if (!timestamp) return 'Unknown';
+            const date = new Date(timestamp);
+            const now = new Date();
+            const diff = (now - date) / 1000;
+            
+            if (diff < 60) return 'Just now';
+            if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+            if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+            return `${Math.floor(diff / 86400)}d ago`;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

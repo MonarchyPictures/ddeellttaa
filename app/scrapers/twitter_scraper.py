@@ -1,22 +1,21 @@
 """
-Twitter/X Scraper
-Uses Nitter instances (Twitter frontend) or mock data for demo
+Twitter/X Scraper - REAL DATA ONLY
+Uses Nitter instances (public Twitter frontends)
+NO MOCK DATA - Returns empty if no real data found
 """
 from typing import List, Optional
 from datetime import datetime
+import re
 
 from .base import BaseScraper, ScrapeResult
 
 
 class TwitterScraper(BaseScraper):
     """
-    Scraper for Twitter/X
+    Scraper for Twitter/X - REAL SIGNALS ONLY
     
-    Note: Twitter requires authentication. This implementation:
-    1. Tries Nitter instances (public Twitter frontends)
-    2. Falls back to mock data for demonstration
-    
-    For production, use Twitter API v2 with proper credentials.
+    This scraper only returns actual data from Twitter/Nitter.
+    If no data is available, it returns an empty list.
     """
     
     NITTER_INSTANCES = [
@@ -33,89 +32,95 @@ class TwitterScraper(BaseScraper):
         """
         Search Twitter for tweets matching query
         
-        For demo purposes, returns mock data.
-        In production, integrate with Twitter API v2.
+        Returns ONLY real data from Nitter/Twitter.
+        NO MOCK DATA - Returns empty list if no results.
         """
+        print(f"[TwitterScraper] Searching for: '{query}'")
+        
         results = []
         
-        # Try Nitter first (public Twitter frontend)
-        try:
-            nitter_results = await self._search_nitter(query, limit)
-            if nitter_results:
-                return nitter_results
-        except Exception as e:
-            print(f"Nitter search failed: {e}")
-        
-        # Fallback to mock data for demonstration
-        print(f"Twitter: Using mock data for '{query}'")
-        results = self._generate_mock_data(query, limit)
-        
-        return results
-    
-    async def _search_nitter(self, query: str, limit: int) -> List[ScrapeResult]:
-        """Try to search using Nitter"""
-        results = []
-        
+        # Try Nitter instances
         for instance in self.NITTER_INSTANCES:
             try:
-                search_url = f"{instance}/search"
-                params = {
-                    "f": "tweets",
-                    "q": query,
-                }
-                
-                response = await self._rate_limited_request(
-                    search_url,
-                    params=params,
-                    timeout=10.0
-                )
-                
-                if response.status_code == 200:
-                    # Parse Nitter HTML (simplified)
-                    # In production, use BeautifulSoup
-                    # For now, return empty to use mock data
-                    pass
-                    
-            except Exception:
+                nitter_results = await self._search_nitter(instance, query, limit)
+                if nitter_results:
+                    results.extend(nitter_results)
+                    print(f"[TwitterScraper] Found {len(nitter_results)} results from {instance}")
+            except Exception as e:
+                print(f"[TwitterScraper] {instance} failed: {e}")
                 continue
+        
+        if not results:
+            print(f"[TwitterScraper] No real results found for '{query}'")
         
         return results
     
-    def _generate_mock_data(self, query: str, limit: int) -> List[ScrapeResult]:
-        """Generate realistic mock data for demonstration"""
-        import random
-        
-        mock_users = [
-            "john_buyer", "sarah_startup", "tech_guy_ke", "business_mom",
-            "startup_founder", "dev_nairobi", "marketing_pro", "ceo_ke"
-        ]
-        
-        mock_contents = [
-            f"Looking for recommendations on {query}. Anyone used a good service?",
-            f"Need {query} ASAP! Please DM me if you provide this service.",
-            f"Who's the best {query} provider in Nairobi? Looking to hire soon.",
-            f"URGENT: Looking for {query}. Budget is flexible. Contact me!",
-            f"Can anyone recommend {query}? Need it for my business.",
-            f"Searching for reliable {query}. Please share your experiences.",
-            f"Looking to purchase {query} this week. Any leads?",
-            f"Need help finding {query}. First time buyer here.",
-        ]
-        
+    async def _search_nitter(self, instance: str, query: str, limit: int) -> List[ScrapeResult]:
+        """Search using Nitter instance - returns real tweets only"""
         results = []
-        for i in range(min(limit, len(mock_contents))):
-            results.append(ScrapeResult(
-                external_id=f"tweet_{i}_{hash(query) % 10000}",
-                source="twitter",
-                title="",
-                content=mock_contents[i % len(mock_contents)],
-                author=random.choice(mock_users),
-                url=f"https://twitter.com/i/web/status/{i}",
-                posted_at=datetime.now(),
-                subreddit=None,
-                metadata={
-                    "likes": random.randint(0, 50),
-                    "retweets": random.randint(0, 10),
-                }
-            ))
+        
+        try:
+            search_url = f"{instance}/search"
+            params = {
+                "f": "tweets",
+                "q": query,
+            }
+            
+            response = await self._rate_limited_request(
+                search_url,
+                params=params,
+                timeout=10.0
+            )
+            
+            if response.status_code == 200:
+                # Parse HTML response
+                html = response.text
+                
+                # Extract tweets using regex (simplified parsing)
+                # Look for tweet containers
+                tweet_pattern = r'<div class="timeline-item"[^>]*>.*?<div class="tweet-content"[^>]*>.*?<a href="([^"]+)"[^>]*class="tweet-link"[^>]*>.*?<div class="tweet-body"[^>]*>.*?<div class="tweet-content"[^>]*>(.*?)</div>.*?</div>'
+                
+                matches = re.findall(tweet_pattern, html, re.DOTALL | re.IGNORECASE)
+                
+                for i, (tweet_url, content_html) in enumerate(matches[:limit]):
+                    # Extract text from HTML
+                    text = self._extract_text_from_html(content_html)
+                    
+                    # Extract author
+                    author_match = re.search(r'/@([^/]+)', tweet_url)
+                    author = author_match.group(1) if author_match else "unknown"
+                    
+                    # Extract tweet ID
+                    tweet_id_match = re.search(r'/status/(\d+)', tweet_url)
+                    tweet_id = tweet_id_match.group(1) if tweet_id_match else f"unknown_{i}"
+                    
+                    if text and len(text) > 10:  # Only valid tweets
+                        results.append(ScrapeResult(
+                            external_id=f"twitter_{tweet_id}",
+                            source="twitter",
+                            title="",
+                            content=text,
+                            author=author,
+                            url=f"{instance}{tweet_url}" if tweet_url.startswith('/') else tweet_url,
+                            posted_at=datetime.utcnow(),  # Nitter doesn't always show exact time
+                            subreddit=None,
+                            metadata={
+                                "instance": instance,
+                                "source": "nitter"
+                            }
+                        ))
+        
+        except Exception as e:
+            print(f"[TwitterScraper] Error parsing {instance}: {e}")
         
         return results
+    
+    def _extract_text_from_html(self, html: str) -> str:
+        """Extract clean text from HTML content"""
+        # Remove HTML tags
+        text = re.sub(r'<[^>]+>', ' ', html)
+        # Decode HTML entities
+        text = text.replace('&quot;', '"').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+        # Clean up whitespace
+        text = ' '.join(text.split())
+        return text.strip()
