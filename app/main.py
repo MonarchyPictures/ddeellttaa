@@ -158,10 +158,8 @@ async def home():
 
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
-    """Serve the dashboard UI"""
-    if os.path.exists("frontend/dist/index.html"):
-        return FileResponse("frontend/dist/index.html")
-    return FileResponse("static/landing.html")
+    """Serve the real-time dashboard UI"""
+    return FileResponse("static/dashboard.html")
 
 
 # ============================================================================

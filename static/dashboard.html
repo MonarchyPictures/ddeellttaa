@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delta 9 - Live Lead Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #0f172a;
+            --bg-secondary: #1e293b;
+            --bg-card: #1e293b;
+            --accent-gold: #fbbf24;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --accent-red: #ef4444;
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo {
+            font-size: 1.5rem;
+            font-weight: bold;
+            background: linear-gradient(135deg, var(--accent-gold), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Main Container */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+
+        /* Search Section */
+        .search-section {
+            margin-bottom: 2rem;
+        }
+
+        .search-box {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .search-input {
+            flex: 1;
+            padding: 1rem 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .search-input:focus {
+            border-color: var(--accent-cyan);
+        }
+
+        .search-btn {
+            padding: 1rem 2rem;
+            background: linear-gradient(135deg, var(--accent-cyan), #0891b2);
+            border: none;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .search-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Stats Bar */
+        .stats-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            color: var(--accent-gold);
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
+        }
+
+        /* Filters */
+        .filters {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 0.5rem 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 20px;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .filter-btn:hover,
+        .filter-btn.active {
+            background: var(--accent-cyan);
+            border-color: var(--accent-cyan);
+            color: white;
+        }
+
+        /* Leads Grid */
+        .leads-grid {
+            display: grid;
+            gap: 1rem;
+        }
+
+        .lead-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 1.5rem;
+            transition: transform 0.2s, border-color 0.2s;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .lead-card:hover {
+            border-color: var(--accent-cyan);
+            transform: translateX(4px);
+        }
+
+        .lead-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 1rem;
+        }
+
+        .lead-platform {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .platform-icon {
+            width: 20px;
+            height: 20px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.75rem;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .platform-reddit { background: #ff4500; }
+        .platform-twitter { background: #1da1f2; }
+        .platform-forum { background: #6366f1; }
+
+        .lead-time {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .lead-text {
+            font-size: 1rem;
+            line-height: 1.5;
+            margin-bottom: 1rem;
+            color: var(--text-primary);
+        }
+
+        .lead-meta {
+            display: flex;
+            gap: 1rem;
+            flex-wrap: wrap;
+            margin-bottom: 1rem;
+        }
+
+        .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .lead-scores {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .score-badge {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .score-intent {
+            background: rgba(6, 182, 212, 0.2);
+            color: var(--accent-cyan);
+        }
+
+        .score-verification {
+            background: rgba(16, 185, 129, 0.2);
+            color: var(--accent-green);
+        }
+
+        .urgency-badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .urgency-immediate {
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--accent-red);
+        }
+
+        .urgency-soon {
+            background: rgba(251, 191, 36, 0.2);
+            color: var(--accent-gold);
+        }
+
+        .urgency-future {
+            background: rgba(148, 163, 184, 0.2);
+            color: var(--text-secondary);
+        }
+
+        .lead-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: opacity 0.2s;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .btn-primary {
+            background: var(--accent-cyan);
+            border: none;
+            color: white;
+        }
+
+        .btn-secondary {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        .btn:hover {
+            opacity: 0.8;
+        }
+
+        /* Empty State */
+        .empty-state {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: var(--text-secondary);
+        }
+
+        .empty-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: var(--text-secondary);
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent-cyan);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Last Updated */
+        .last-updated {
+            text-align: center;
+            padding: 1rem;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .container {
+                padding: 1rem;
+            }
+
+            .search-box {
+                flex-direction: column;
+            }
+
+            .lead-header {
+                flex-direction: column;
+                gap: 0.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="header">
+        <div class="logo">⚡ Delta 9</div>
+        <div class="status">
+            <span class="status-dot"></span>
+            <span id="connection-status">Live Feed Active</span>
+        </div>
+    </header>
+
+    <div class="container">
+        <!-- Search Section -->
+        <div class="search-section">
+            <div class="search-box">
+                <input 
+                    type="text" 
+                    class="search-input" 
+                    id="search-input"
+                    placeholder="Search leads... (e.g., plumber, software, consultant)"
+                    value="plumber"
+                >
+                <button class="search-btn" onclick="searchLeads()">Search</button>
+            </div>
+
+            <!-- Stats Bar -->
+            <div class="stats-bar" id="stats-bar">
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-total">0</div>
+                    <div class="stat-label">Total Leads</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-new">0</div>
+                    <div class="stat-label">New Today</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-high-intent">0</div>
+                    <div class="stat-label">High Intent</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="stat-verified">0</div>
+                    <div class="stat-label">Verified</div>
+                </div>
+            </div>
+
+            <!-- Filters -->
+            <div class="filters">
+                <button class="filter-btn active" onclick="filterPlatform('all')">All Platforms</button>
+                <button class="filter-btn" onclick="filterPlatform('reddit')">Reddit</button>
+                <button class="filter-btn" onclick="filterPlatform('twitter')">Twitter</button>
+                <button class="filter-btn" onclick="filterPlatform('forum')">Forums</button>
+            </div>
+        </div>
+
+        <!-- Leads Grid -->
+        <div class="leads-grid" id="leads-grid">
+            <div class="loading">
+                <div class="spinner"></div>
+                <p>Loading leads...</p>
+            </div>
+        </div>
+
+        <!-- Last Updated -->
+        <div class="last-updated" id="last-updated"></div>
+    </div>
+
+    <script>
+        // Configuration
+        const API_BASE = '/api';
+        const REFRESH_INTERVAL = 5000; // 5 seconds
+        
+        // State
+        let currentQuery = 'plumber';
+        let currentPlatform = 'all';
+        let refreshTimer = null;
+        let lastLeads = [];
+
+        // Platform icons
+        const platformIcons = {
+            reddit: 'R',
+            twitter: 'T',
+            forum: 'F'
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initial load
+            searchLeads();
+            
+            // Start auto-refresh
+            startAutoRefresh();
+            
+            // Enter key in search
+            document.getElementById('search-input').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    searchLeads();
+                }
+            });
+        });
+
+        // Start auto-refresh
+        function startAutoRefresh() {
+            refreshTimer = setInterval(() => {
+                fetchLeads(false); // Silent refresh (don't show loading)
+            }, REFRESH_INTERVAL);
+        }
+
+        // Stop auto-refresh
+        function stopAutoRefresh() {
+            if (refreshTimer) {
+                clearInterval(refreshTimer);
+            }
+        }
+
+        // Search leads
+        function searchLeads() {
+            const input = document.getElementById('search-input');
+            currentQuery = input.value.trim() || 'plumber';
+            fetchLeads(true);
+        }
+
+        // Filter by platform
+        function filterPlatform(platform) {
+            currentPlatform = platform;
+            
+            // Update button states
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            event.target.classList.add('active');
+            
+            fetchLeads(true);
+        }
+
+        // Fetch leads from API
+        async function fetchLeads(showLoading = true) {
+            const grid = document.getElementById('leads-grid');
+            
+            if (showLoading) {
+                grid.innerHTML = `
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p>Loading leads...</p>
+                    </div>
+                `;
+            }
+
+            try {
+                // Build URL
+                let url = `${API_BASE}/leads?q=${encodeURIComponent(currentQuery)}&limit=50`;
+                
+                if (currentPlatform !== 'all') {
+                    url += `&platform=${currentPlatform}`;
+                }
+
+                const response = await fetch(url);
+                const data = await response.json();
+
+                if (response.ok) {
+                    renderLeads(data);
+                    updateStats(data);
+                } else {
+                    showError(data.error || 'Failed to load leads');
+                }
+            } catch (error) {
+                console.error('Error fetching leads:', error);
+                showError('Connection error. Retrying...');
+            }
+        }
+
+        // Render leads
+        function renderLeads(data) {
+            const grid = document.getElementById('leads-grid');
+            const leads = data.leads || [];
+            
+            // Check for new leads
+            const newLeadIds = leads.filter(l => !lastLeads.find(ll => ll.id === l.id)).map(l => l.id);
+            
+            if (leads.length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-icon">🔍</div>
+                        <h3>No leads found</h3>
+                        <p>Try a different search query or check back later.</p>
+                    </div>
+                `;
+            } else {
+                grid.innerHTML = leads.map(lead => renderLeadCard(lead, newLeadIds.includes(lead.id))).join('');
+            }
+
+            // Update last updated time
+            document.getElementById('last-updated').textContent = 
+                `Last updated: ${new Date().toLocaleTimeString()}`;
+            
+            // Store for next comparison
+            lastLeads = leads;
+        }
+
+        // Render single lead card
+        function renderLeadCard(lead, isNew = false) {
+            const platform = lead.platform || 'unknown';
+            const platformClass = `platform-${platform}`;
+            const platformIcon = platformIcons[platform] || '?';
+            
+            const urgencyClass = `urgency-${lead.urgency || 'future'}`;
+            
+            const timeAgo = getTimeAgo(lead.discovered_at);
+            
+            return `
+                <div class="lead-card" ${isNew ? 'style="border-color: #06b6d4;"' : ''}>
+                    <div class="lead-header">
+                        <div class="lead-platform">
+                            <span class="platform-icon ${platformClass}">${platformIcon}</span>
+                            <span>${platform}</span>
+                        </div>
+                        <span class="lead-time">${timeAgo}</span>
+                    </div>
+                    
+                    <div class="lead-text">${escapeHtml(lead.text)}</div>
+                    
+                    <div class="lead-meta">
+                        <div class="meta-item">
+                            <span>👤</span>
+                            <span>${escapeHtml(lead.author || 'Unknown')}</span>
+                        </div>
+                        <div class="meta-item">
+                            <span>📍</span>
+                            <span>${escapeHtml(lead.location || 'Unknown')}</span>
+                        </div>
+                        ${lead.contact?.email ? `
+                            <div class="meta-item">
+                                <span>✉️</span>
+                                <span>${escapeHtml(lead.contact.email)}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    <div class="lead-scores">
+                        <span class="score-badge score-intent">
+                            Intent: ${Math.round((lead.intent_score || 0) * 100)}%
+                        </span>
+                        <span class="score-badge score-verification">
+                            Verified: ${Math.round((lead.verification_score || 0) * 100)}%
+                        </span>
+                        <span class="urgency-badge ${urgencyClass}">
+                            ${lead.urgency || 'future'}
+                        </span>
+                    </div>
+                    
+                    <div class="lead-actions">
+                        ${lead.url ? `
+                            <a href="${escapeHtml(lead.url)}" target="_blank" class="btn btn-primary">
+                                View Source ↗
+                            </a>
+                        ` : ''}
+                        <button class="btn btn-secondary" onclick="claimLead(${lead.id})">
+                            Claim Lead
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Update stats
+        function updateStats(data) {
+            const leads = data.leads || [];
+            
+            document.getElementById('stat-total').textContent = data.total || 0;
+            document.getElementById('stat-new').textContent = leads.filter(l => 
+                new Date(l.discovered_at) > new Date(Date.now() - 24 * 60 * 60 * 1000)
+            ).length;
+            document.getElementById('stat-high-intent').textContent = leads.filter(l => 
+                (l.intent_score || 0) >= 0.7
+            ).length;
+            document.getElementById('stat-verified').textContent = leads.filter(l => 
+                (l.verification_score || 0) >= 0.8
+            ).length;
+        }
+
+        // Claim lead
+        async function claimLead(leadId) {
+            try {
+                const user = prompt('Enter your name to claim this lead:');
+                if (!user) return;
+
+                const response = await fetch(`${API_BASE}/leads/${leadId}/claim?user=${encodeURIComponent(user)}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert('Lead claimed successfully!');
+                    fetchLeads(true);
+                } else {
+                    const data = await response.json();
+                    alert(data.detail || 'Failed to claim lead');
+                }
+            } catch (error) {
+                console.error('Error claiming lead:', error);
+                alert('Error claiming lead');
+            }
+        }
+
+        // Show error
+        function showError(message) {
+            const grid = document.getElementById('leads-grid');
+            grid.innerHTML = `
+                <div class="empty-state">
+                    <div class="empty-icon">⚠️</div>
+                    <h3>${message}</h3>
+                    <button class="btn btn-primary" onclick="fetchLeads(true)" style="margin-top: 1rem;">
+                        Retry
+                    </button>
+                </div>
+            `;
+        }
+
+        // Utility: Get time ago
+        function getTimeAgo(dateString) {
+            if (!dateString) return 'Unknown';
+            
+            const date = new Date(dateString);
+            const now = new Date();
+            const seconds = Math.floor((now - date) / 1000);
+            
+            if (seconds < 60) return 'Just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            return `${Math.floor(seconds / 86400)}d ago`;
+        }
+
+        // Utility: Escape HTML
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            stopAutoRefresh();
+        });
+    </script>
+</body>
+</html>
