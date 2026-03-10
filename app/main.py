@@ -1,6 +1,6 @@
 """
 Delta 9 - AI Buyer Discovery Engine
-Complete API with Live Lead Feed
+Distributed Scraper Workers with Celery + Redis
 Production-ready for Railway
 """
 
@@ -15,17 +15,40 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from celery import chain, group, chord
 
-# Import models
-from .models.lead import init_db, get_db, Lead, Signal, SearchQuery, SessionLocal
+# Database
+from app.models.lead import init_db, get_db, Lead, Signal, SearchQuery, SessionLocal
 
-# Import services
-from .services.query_expansion import get_expansion_service
-from .services.intent_detection import get_intent_service
-from .services.lead_verification import get_verification_service
+# Services
+from app.services.query_expansion import get_expansion_service
+from app.services.intent_detection import get_intent_service
+from app.services.lead_verification import get_verification_service
 
-# Import scrapers
-from .scrapers.scraper_manager import get_scraper_manager
+# Scraper Manager (for sync operations)
+from app.scrapers.scraper_manager import get_scraper_manager
+
+# Celery Tasks (for distributed operations)
+from app.tasks.scraper_tasks import (
+    scrape_reddit,
+    scrape_twitter,
+    scrape_forum,
+    scrape_all_sources,
+    process_signal,
+    search_and_process,
+)
+from app.tasks.lead_tasks import (
+    create_lead_from_signals,
+    verify_lead,
+    enrich_lead_data,
+    process_unprocessed_signals,
+)
+
+# Celery App
+from app.core.celery_config import celery_app, check_celery_health
+
+# Worker Manager
+from app.workers.worker_manager import get_worker_manager
 
 # Environment variables
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
@@ -58,7 +81,6 @@ class ConnectionManager:
             except Exception:
                 disconnected.append(connection)
         
-        # Clean up disconnected clients
         for conn in disconnected:
             self.disconnect(conn)
 
@@ -69,7 +91,6 @@ manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
-    # Startup
     print(f"🚀 Delta 9 Starting...")
     print(f"   Environment: {ENVIRONMENT}")
     print(f"   Port: {PORT}")
@@ -78,17 +99,23 @@ async def lifespan(app: FastAPI):
     init_db()
     print("✅ Database initialized")
     
+    # Check Celery/Redis connection
+    health = check_celery_health()
+    if health["status"] == "ok":
+        print("✅ Celery/Redis connected")
+    else:
+        print(f"⚠️  Celery/Redis: {health.get('message', 'not connected')}")
+    
     yield
     
-    # Shutdown
     print("👋 Delta 9 Shutting down...")
 
 
 # Create FastAPI app
 app = FastAPI(
     title="Delta 9",
-    description="AI Buyer Discovery Engine - Real-time Lead Generation",
-    version="1.0.0",
+    description="AI Buyer Discovery Engine - Distributed Scraper Workers",
+    version="2.0.0",
     debug=DEBUG,
     lifespan=lifespan,
 )
@@ -105,7 +132,6 @@ app.add_middleware(
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Mount assets only if directory exists
 if os.path.isdir("frontend/dist/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
     print("✅ Mounted /assets")
@@ -136,11 +162,14 @@ async def dashboard():
 @app.get("/health")
 def health():
     """Health check endpoint"""
+    celery_health = check_celery_health()
+    
     return {
         "status": "ok",
         "service": "delta-9",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "environment": ENVIRONMENT,
+        "celery": celery_health,
         "timestamp": datetime.utcnow().isoformat(),
     }
 
@@ -148,19 +177,22 @@ def health():
 @app.get("/api/status")
 async def get_status():
     """Get system status"""
+    worker_manager = get_worker_manager()
+    worker_stats = worker_manager.get_worker_stats()
+    
     return {
         "status": "running",
         "environment": ENVIRONMENT,
-        "version": "1.0.0",
+        "version": "2.0.0",
         "features": {
             "dashboard": os.path.exists("frontend/dist/index.html"),
             "assets": os.path.isdir("frontend/dist/assets"),
             "live_feed": True,
+            "distributed_workers": True,
             "scrapers": ["reddit", "twitter", "forum"],
         },
-        "stats": {
-            "active_websocket_connections": len(manager.active_connections),
-        }
+        "workers": worker_stats,
+        "websocket_connections": len(manager.active_connections),
     }
 
 
@@ -173,11 +205,7 @@ async def expand_query(
     q: str = Query(..., description="Search query to expand"),
     category: str = Query("general", description="Industry category"),
 ):
-    """
-    Expand a query into buyer-intent search phrases
-    
-    Example: "plumber" -> ["need plumber", "looking for plumber", ...]
-    """
+    """Expand a query into buyer-intent search phrases"""
     service = get_expansion_service()
     phrases = service.expand(q, category)
     
@@ -185,36 +213,113 @@ async def expand_query(
         "original": q,
         "category": category,
         "expanded_count": len(phrases),
-        "phrases": phrases[:20],  # Return top 20
+        "phrases": phrases[:20],
     }
 
 
 # ============================================================================
-# SEARCH & SCRAPING
+# DISTRIBUTED SEARCH API (Celery Tasks)
 # ============================================================================
 
-@app.post("/api/search")
-async def search_leads(
-    background_tasks: BackgroundTasks,
+@app.post("/api/search/async")
+async def search_async(
     query: str,
     expand: bool = True,
-    max_results: int = 10,
+    background_tasks: BackgroundTasks = None,
 ):
     """
-    Search all sources for leads matching the query
+    Launch distributed search across all scrapers
     
-    This triggers scrapers across Reddit, Twitter, and Forums
+    Uses Celery to run scrapers in parallel across worker nodes.
+    Returns task IDs for polling status.
+    """
+    print(f"[API] Launching async search for: {query}")
+    
+    # Launch the Celery task
+    task = search_and_process.delay(query, expand)
+    
+    return {
+        "workflow": "distributed_search",
+        "query": query,
+        "task_id": task.id,
+        "status": "queued",
+        "poll_url": f"/api/tasks/{task.id}/status",
+    }
+
+
+@app.get("/api/search/async")
+async def search_async_get(
+    q: str = Query(..., description="Search query"),
+    expand: bool = Query(True, description="Expand query"),
+):
+    """GET version of async search"""
+    task = search_and_process.delay(q, expand)
+    
+    return {
+        "workflow": "distributed_search",
+        "query": q,
+        "task_id": task.id,
+        "status": "queued",
+        "poll_url": f"/api/tasks/{task.id}/status",
+    }
+
+
+@app.post("/api/search/source/{source}")
+async def search_single_source(
+    source: str,  # reddit, twitter, forum
+    query: str,
+):
+    """Search a single source using a Celery worker"""
+    
+    task_mapping = {
+        "reddit": scrape_reddit,
+        "twitter": scrape_twitter,
+        "forum": scrape_forum,
+    }
+    
+    if source not in task_mapping:
+        return JSONResponse(
+            status_code=400,
+            content={"error": f"Unknown source: {source}. Use: {list(task_mapping.keys())}"}
+        )
+    
+    # Launch task
+    task = task_mapping[source].delay(query)
+    
+    return {
+        "source": source,
+        "query": query,
+        "task_id": task.id,
+        "status": "queued",
+        "poll_url": f"/api/tasks/{task.id}/status",
+    }
+
+
+# ============================================================================
+# SYNC SEARCH (Direct - for quick testing)
+# ============================================================================
+
+@app.get("/api/search")
+async def search_sync(
+    q: str = Query(..., description="Search query"),
+    expand: bool = Query(True, description="Expand query"),
+    limit: int = Query(10, description="Max results per source"),
+):
+    """
+    Synchronous search (runs directly, not distributed)
+    
+    Use /api/search/async for distributed processing.
     """
     scraper = get_scraper_manager()
     
     try:
         results = await scraper.search_all(
-            query=query,
+            query=q,
             expand=expand,
-            max_results_per_source=max_results
+            max_results_per_source=limit
         )
         
-        # Broadcast new signals to live feed
+        # Broadcast to live feed
         for signal in results.get("signals", [])[:5]:
             await manager.broadcast({
                 "type": "signal",
@@ -222,7 +327,6 @@ async def search_leads(
                 "timestamp": datetime.utcnow().isoformat(),
             })
         
-        # Broadcast new leads
         for lead in results.get("leads", [])[:3]:
             await manager.broadcast({
                 "type": "lead",
@@ -239,27 +343,52 @@ async def search_leads(
         )
 
 
-@app.get("/api/search")
-async def search_get(
-    q: str = Query(..., description="Search query"),
-    expand: bool = Query(True, description="Expand query into buyer-intent phrases"),
-    limit: int = Query(10, description="Max results per source"),
-):
-    """GET version of search for easy testing"""
-    scraper = get_scraper_manager()
-    
-    try:
-        results = await scraper.search_all(
-            query=q,
-            expand=expand,
-            max_results_per_source=limit
-        )
-        return results
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": str(e)}
-        )
+# ============================================================================
+# TASK MONITORING API
+# ============================================================================
+
+@app.get("/api/tasks/{task_id}/status")
+async def get_task_status(task_id: str):
+    """Get the status of a Celery task"""
+    worker_manager = get_worker_manager()
+    return worker_manager.get_task_status(task_id)
+
+
+@app.get("/api/tasks/bulk-status")
+async def get_bulk_task_status(task_ids: List[str] = Query(...)):
+    """Get status for multiple tasks at once"""
+    worker_manager = get_worker_manager()
+    return {
+        "tasks": [worker_manager.get_task_status(tid) for tid in task_ids]
+    }
+
+
+@app.get("/api/workers/status")
+async def get_workers_status():
+    """Get Celery worker status"""
+    worker_manager = get_worker_manager()
+    return worker_manager.get_worker_stats()
+
+
+@app.get("/api/workers/ping")
+async def ping_workers():
+    """Ping all workers to check connectivity"""
+    worker_manager = get_worker_manager()
+    return worker_manager.broadcast_ping()
+
+
+@app.get("/api/queues/status")
+async def get_queue_status():
+    """Get task queue lengths"""
+    worker_manager = get_worker_manager()
+    return worker_manager.get_queue_lengths()
+
+
+@app.post("/api/tasks/{task_id}/revoke")
+async def revoke_task(task_id: str, terminate: bool = False):
+    """Revoke/cancel a running task"""
+    worker_manager = get_worker_manager()
+    return worker_manager.revoke_task(task_id, terminate)
 
 
 # ============================================================================
@@ -363,6 +492,19 @@ async def update_lead(
     return {"message": "Lead updated", "id": lead_id}
 
 
+@app.post("/api/leads/{lead_id}/verify")
+async def verify_lead_async(lead_id: int):
+    """Launch async lead verification task"""
+    task = verify_lead.delay(lead_id)
+    
+    return {
+        "lead_id": lead_id,
+        "task_id": task.id,
+        "status": "queued",
+        "poll_url": f"/api/tasks/{task.id}/status",
+    }
+
+
 # ============================================================================
 # SIGNALS API
 # ============================================================================
@@ -404,24 +546,29 @@ async def get_signals(
     }
 
 
+@app.post("/api/signals/{signal_id}/process")
+async def process_signal_async(signal_id: int):
+    """Launch async signal processing task"""
+    task = process_signal.delay(signal_id)
+    
+    return {
+        "signal_id": signal_id,
+        "task_id": task.id,
+        "status": "queued",
+        "poll_url": f"/api/tasks/{task.id}/status",
+    }
+
+
 # ============================================================================
 # LIVE FEED WEBSOCKET
 # ============================================================================
 
 @app.websocket("/ws/live")
 async def websocket_live(websocket: WebSocket):
-    """
-    WebSocket endpoint for live lead feed
-    
-    Connect to this endpoint to receive real-time:
-    - New signals from scrapers
-    - Verified leads
-    - System updates
-    """
+    """WebSocket endpoint for live lead feed"""
     await manager.connect(websocket)
     
     try:
-        # Send initial connection message
         await websocket.send_json({
             "type": "connected",
             "message": "Connected to Delta 9 Live Feed",
@@ -429,35 +576,27 @@ async def websocket_live(websocket: WebSocket):
         })
         
         while True:
-            # Wait for client messages (ping/keepalive)
             data = await websocket.receive_text()
             
-            # Handle ping
             if data == "ping":
                 await websocket.send_json({
                     "type": "pong",
                     "timestamp": datetime.utcnow().isoformat(),
                 })
-            
-            # Handle search requests from client
             elif data.startswith("search:"):
-                query = data[7:]  # Remove "search:" prefix
+                query = data[7:]
                 await websocket.send_json({
                     "type": "search_started",
                     "query": query,
                 })
                 
-                # Run search and broadcast results
-                scraper = get_scraper_manager()
-                results = await scraper.search_all(query, expand=True, max_results_per_source=5)
+                # Launch async search
+                task = search_and_process.delay(query)
                 
                 await websocket.send_json({
-                    "type": "search_complete",
+                    "type": "search_queued",
                     "query": query,
-                    "results": {
-                        "signals_found": results.get("total_signals", 0),
-                        "leads_found": results.get("leads_found", 0),
-                    }
+                    "task_id": task.id,
                 })
                 
     except WebSocketDisconnect:
@@ -474,6 +613,10 @@ async def websocket_live(websocket: WebSocket):
 @app.get("/api/stats")
 async def get_stats(db: Session = Depends(get_db)):
     """Get system statistics"""
+    # Get queue status
+    worker_manager = get_worker_manager()
+    queues = worker_manager.get_queue_lengths()
+    
     return {
         "leads": {
             "total": db.query(Lead).count(),
@@ -492,6 +635,7 @@ async def get_stats(db: Session = Depends(get_db)):
             "twitter": db.query(Signal).filter(Signal.source == "twitter").count(),
             "forum": db.query(Signal).filter(Signal.source == "forum").count(),
         },
+        "queues": queues,
         "timestamp": datetime.utcnow().isoformat(),
     }
 
@@ -510,26 +654,3 @@ async def global_exception_handler(request: Request, exc: Exception):
             "message": str(exc) if DEBUG else "An error occurred",
         },
     )
-
-
-# ============================================================================
-# BACKGROUND TASKS
-# ============================================================================
-
-async def periodic_search_task():
-    """Background task to periodically search for leads"""
-    while True:
-        try:
-            await asyncio.sleep(300)  # Every 5 minutes
-            print("Running periodic search...")
-            # Add periodic searches here
-        except Exception as e:
-            print(f"Periodic search error: {e}")
-
-
-# Start background tasks on startup
-@app.on_event("startup")
-async def start_background_tasks():
-    """Start background tasks"""
-    # asyncio.create_task(periodic_search_task())
-    pass

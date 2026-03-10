@@ -1,3 +1,6 @@
-# Delta 9 API App Package
-# BUILD: 2026-02-27T20:20:00Z
-# DEBUG: ENABLED
+"""
+Delta 9 API App Package
+Distributed Scraper Workers with Celery + Redis
+"""
+
+__version__ = "2.0.0"
