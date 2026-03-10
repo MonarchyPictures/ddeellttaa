@@ -53,6 +53,7 @@ from app.workers.worker_manager import get_worker_manager
 # Signal Stream
 from app.services.signal_stream import get_signal_stream, get_signal_producer
 from app.api.signal_stream import router as signal_stream_router
+from app.api.leads import router as leads_router
 
 # Environment variables
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
@@ -140,8 +141,9 @@ if os.path.isdir("frontend/dist/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
     print("✅ Mounted /assets")
 
-# Include Signal Stream API routes
+# Include API routes
 app.include_router(signal_stream_router)
+app.include_router(leads_router)
 
 
 # ============================================================================
