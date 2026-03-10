@@ -1,208 +1,346 @@
 """
-Intent Detection & Scoring Service
-Analyzes content to detect buying intent
+Intent Detection AI
+Filters for true buyer intent with 0-1 probability scoring
 """
 import re
 from typing import Dict, List, Tuple
 from dataclasses import dataclass
-from datetime import datetime
 
 
 @dataclass
 class IntentResult:
     """Result of intent analysis"""
-    intent_score: float  # 0-1
-    intent_category: str  # buying, researching, complaining, etc.
-    buying_urgency: str  # immediate, soon, future
+    intent_score: float  # 0-1 buyer probability
+    intent_category: str  # buying, researching, vendor, discussion
+    buying_urgency: str  # immediate, soon, future, none
     keywords_matched: List[str]
-    confidence: float  # 0-1
+    confidence: float  # 0-1 confidence in the score
+    is_buyer: bool  # True if intent_score >= 0.5
 
 
 class IntentDetectionService:
     """
-    Detects buying intent in text content.
-    Uses keyword matching and scoring algorithms.
+    AI-powered Intent Detection
+    
+    Scores text for buyer intent (0-1 probability)
+    Filters out vendors, spammers, and irrelevant content
     """
     
-    # High-intent keywords (strong buying signals)
+    # HIGH INTENT - Strong buying signals (weight: 0.25 each)
     HIGH_INTENT_KEYWORDS = [
-        "buy", "purchase", "order", "get", "need", "want",
-        "looking for", "searching for", "recommend", "suggest",
-        "quote", "pricing", "cost", "budget", "affordable",
-        "hire", "pay", "spend", "invest", "purchase",
-        "asap", "urgent", "immediately", "today", "now",
-        "contact", "reach out", "dm", "message", "call",
+        # Direct need
+        "need", "i need", "we need",
+        "looking for", "searching for", "trying to find",
+        "want", "i want", "we want",
+        
+        # Urgency
+        "asap", "urgently", "urgent", "immediately",
+        "today", "this week", "right now",
+        
+        # Hiring/Purchasing
+        "hire", "looking to hire", "want to hire",
+        "buy", "looking to buy", "want to buy",
+        "purchase", "order", "get",
+        
+        # Recommendations
+        "recommend", "recommendation", "suggest",
+        "any good", "best", "top rated",
+        "who is the best", "who's the best",
+        
+        # Quotes/Pricing
+        "quote", "pricing", "how much",
+        "cost", "price", "budget",
+        "affordable", "cheap", "reasonable price",
+        
+        # Contact intent
+        "dm me", "message me", "contact me",
+        "reach out", "call me", "email me",
     ]
     
-    # Medium-intent keywords (researching)
+    # MEDIUM INTENT - Researching (weight: 0.10 each)
     MEDIUM_INTENT_KEYWORDS = [
-        "compare", "vs", "versus", "alternatives", "options",
-        "review", "reviews", "rating", "rated", "best",
-        "good", "quality", "reliable", "trustworthy",
-        "considering", "thinking about", "interested in",
-        "learn more", "information", "details",
+        # Research
+        "compare", "vs", "versus", "alternatives",
+        "review", "reviews", "rating", "rated",
+        "experience with", "used", "using",
+        
+        # Interest
+        "interested in", "considering", "thinking about",
+        "learn more", "information about",
+        "help with", "advice on",
+        
+        # Questions
+        "where can i get", "where to find",
+        "who provides", "who offers",
+        "how do i", "what's the best",
     ]
     
-    # Low-intent keywords (general discussion)
+    # LOW INTENT - General discussion (weight: 0.02 each)
     LOW_INTENT_KEYWORDS = [
-        "what is", "how does", "why", "opinion", "thoughts",
-        "experience", "using", "used", "have", "had",
+        "what is", "how does", "why",
+        "opinion", "thoughts on", "feedback",
     ]
     
-    # Urgency indicators
+    # NEGATIVE - Vendor/Seller indicators (penalty: -0.3)
+    VENDOR_KEYWORDS = [
+        # Self-promotion
+        "i am a", "i'm a", "i am an", "i'm an",
+        "we are a", "we're a",
+        "i work as", "i work for",
+        "my company", "our company",
+        "i run", "we run",
+        "my business", "our business",
+        
+        # Selling
+        "for sale", "selling", "we sell",
+        "i sell", "offering", "we offer",
+        "services provided", "we provide",
+        "contact us", "hire us", "choose us",
+        "get in touch", "reach us",
+        
+        # Marketing speak
+        "best prices", "guaranteed", "discount",
+        "special offer", "limited time",
+        "contact today", "call now",
+    ]
+    
+    # NEGATIVE - Spam/low quality (penalty: -0.2)
+    SPAM_INDICATORS = [
+        "click here", "click link", "check my bio",
+        "follow me", "subscribe", "share this",
+        "upvote", "like this",
+    ]
+    
+    # URGENCY PATTERNS
     URGENCY_PATTERNS = {
-        "immediate": ["asap", "urgent", "immediately", "today", "now", "emergency", "rush"],
-        "soon": ["this week", "soon", "quickly", "fast", "shortly", "couple days"],
-        "future": ["next month", "later", "eventually", "someday", "considering"],
+        "immediate": ["asap", "urgent", "immediately", "today", "now", "emergency", "right now"],
+        "soon": ["this week", "soon", "quickly", "fast", "in a few days", "shortly"],
+        "future": ["next month", "later", "eventually", "someday", "considering", "thinking"],
     }
     
-    # Negative patterns (false positives)
-    NEGATIVE_PATTERNS = [
-        r"i (am|was) a \w+",  # "I am a plumber" (not looking for one)
-        r"i work as",
-        r"my company",
-        r"we offer",
-        r"we provide",
-        r"for sale",
-        r"selling",
-        r"vendor",  # Often vendors posing as buyers
-    ]
-    
-    # Contact info patterns (high value signal)
-    CONTACT_PATTERNS = {
-        "email": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
-        "phone": r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}',
-        "dm_request": r'(dm me|message me|send me a dm|inbox|private message)',
+    # CONTEXT BOOSTERS - Add context to scoring
+    CONTEXT_PATTERNS = {
+        "first_person": ["i ", "my ", "me ", "we ", "our "],  # +0.1
+        "question": ["?"],  # +0.05
+        "location": ["in nairobi", "in kenya", "near me", "local"],  # +0.05
     }
     
     def __init__(self):
+        # Compile regex patterns for efficiency
         self._compile_patterns()
     
     def _compile_patterns(self):
-        """Compile regex patterns for efficiency"""
-        self.negative_regex = [re.compile(p, re.IGNORECASE) for p in self.NEGATIVE_PATTERNS]
-        self.contact_regex = {k: re.compile(v, re.IGNORECASE) for k, v in self.CONTACT_PATTERNS.items()}
+        """Pre-compile regex patterns"""
+        self.vendor_pattern = re.compile(
+            r'\b(' + '|'.join(map(re.escape, self.VENDOR_KEYWORDS)) + r')\b',
+            re.IGNORECASE
+        )
+        self.spam_pattern = re.compile(
+            r'\b(' + '|'.join(map(re.escape, self.SPAM_INDICATORS)) + r')\b',
+            re.IGNORECASE
+        )
     
     def analyze(self, text: str, query: str = "") -> IntentResult:
         """
-        Analyze text for buying intent.
+        Analyze text for buyer intent
         
-        Args:
-            text: The content to analyze
-            query: The search query that matched (for context)
-            
-        Returns:
-            IntentResult with scores and classification
+        Returns IntentResult with:
+        - intent_score: 0-1 probability of being a buyer
+        - intent_category: buying, researching, vendor, or discussion
+        - buying_urgency: immediate, soon, future, or none
+        - keywords_matched: Which keywords were found
+        - confidence: 0-1 confidence level
+        - is_buyer: True if score >= 0.5
         """
-        text_lower = text.lower()
-        words = set(text_lower.split())
-        
-        # Check for negative patterns first (vendor/false positive detection)
-        if self._is_likely_vendor(text):
+        if not text:
             return IntentResult(
                 intent_score=0.0,
-                intent_category="vendor",
+                intent_category="unknown",
                 buying_urgency="none",
                 keywords_matched=[],
-                confidence=0.9
+                confidence=0.0,
+                is_buyer=False
             )
         
-        # Count keyword matches
-        high_matches = [kw for kw in self.HIGH_INTENT_KEYWORDS if kw in text_lower]
-        medium_matches = [kw for kw in self.MEDIUM_INTENT_KEYWORDS if kw in text_lower]
-        low_matches = [kw for kw in self.LOW_INTENT_KEYWORDS if kw in text_lower]
+        text_lower = text.lower()
+        score = 0.0
+        keywords_matched = []
         
-        # Calculate base intent score
-        score = (
-            len(high_matches) * 0.25 +
-            len(medium_matches) * 0.10 +
-            len(low_matches) * 0.02
-        )
+        # 1. Check for VENDOR indicators (immediate disqualifier)
+        vendor_matches = self.vendor_pattern.findall(text_lower)
+        if vendor_matches:
+            score -= 0.4
+            keywords_matched.extend([f"[VENDOR: {m}]" for m in vendor_matches[:3]])
         
-        # Boost score for contact info
-        contact_info = self._extract_contact_signals(text)
-        if contact_info:
-            score += 0.15 * len(contact_info)
+        # 2. Check for SPAM indicators
+        spam_matches = self.spam_pattern.findall(text_lower)
+        if spam_matches:
+            score -= 0.2
+            keywords_matched.extend([f"[SPAM: {m}]" for m in spam_matches[:2]])
         
-        # Boost for question marks (asking for help/recommendations)
+        # 3. Score HIGH INTENT keywords (strong buyer signals)
+        for keyword in self.HIGH_INTENT_KEYWORDS:
+            if keyword in text_lower:
+                score += 0.25
+                keywords_matched.append(keyword)
+        
+        # 4. Score MEDIUM INTENT keywords
+        for keyword in self.MEDIUM_INTENT_KEYWORDS:
+            if keyword in text_lower:
+                score += 0.10
+                if keyword not in keywords_matched:  # Avoid duplicates
+                    keywords_matched.append(keyword)
+        
+        # 5. Score LOW INTENT keywords
+        for keyword in self.LOW_INTENT_KEYWORDS:
+            if keyword in text_lower:
+                score += 0.02
+                if keyword not in keywords_matched:
+                    keywords_matched.append(keyword)
+        
+        # 6. Context boosters
+        # First person pronouns (personal need vs general discussion)
+        if any(p in text_lower for p in self.CONTEXT_PATTERNS["first_person"]):
+            score += 0.10
+        
+        # Question marks (asking for help/recommendations)
         if "?" in text:
-            score += 0.1
+            score += 0.05
         
-        # Boost for first-person pronouns (personal need)
-        first_person = ["i ", "my ", "me ", "we ", "our "]
-        if any(fp in text_lower for fp in first_person):
-            score += 0.1
+        # Location mentions (local intent)
+        if any(loc in text_lower for loc in self.CONTEXT_PATTERNS["location"]):
+            score += 0.05
         
-        # Determine urgency
+        # 7. Determine urgency
         urgency = self._detect_urgency(text_lower)
         if urgency == "immediate":
-            score += 0.2
+            score += 0.15
         elif urgency == "soon":
-            score += 0.1
+            score += 0.05
         
-        # Cap score at 1.0
-        score = min(score, 1.0)
+        # 8. Cap score between 0 and 1
+        score = max(0.0, min(1.0, score))
         
-        # Determine category
-        category = self._classify_intent(score, high_matches, medium_matches)
+        # 9. Determine category
+        category = self._classify_category(score, vendor_matches, keywords_matched)
         
-        # Calculate confidence based on text length and matches
-        confidence = min((len(high_matches) + len(medium_matches)) / 3, 1.0)
-        if len(text) < 20:  # Very short text
-            confidence *= 0.5
+        # 10. Calculate confidence
+        confidence = self._calculate_confidence(text, keywords_matched)
+        
+        # 11. Determine if buyer
+        is_buyer = score >= 0.5 and not vendor_matches
         
         return IntentResult(
             intent_score=round(score, 3),
             intent_category=category,
             buying_urgency=urgency,
-            keywords_matched=high_matches + medium_matches,
-            confidence=round(confidence, 3)
+            keywords_matched=keywords_matched[:10],  # Top 10
+            confidence=round(confidence, 3),
+            is_buyer=is_buyer
         )
-    
-    def _is_likely_vendor(self, text: str) -> bool:
-        """Check if text is likely from a vendor/seller"""
-        return any(pattern.search(text) for pattern in self.negative_regex)
     
     def _detect_urgency(self, text: str) -> str:
         """Detect urgency level from text"""
+        text_lower = text.lower()
+        
         for level, keywords in self.URGENCY_PATTERNS.items():
-            if any(kw in text for kw in keywords):
+            if any(kw in text_lower for kw in keywords):
                 return level
-        return "unknown"
+        
+        return "none"
     
-    def _extract_contact_signals(self, text: str) -> List[str]:
-        """Extract contact information signals"""
-        signals = []
-        for name, pattern in self.contact_regex.items():
-            if pattern.search(text):
-                signals.append(name)
-        return signals
-    
-    def _classify_intent(self, score: float, high: List, medium: List) -> str:
-        """Classify the type of intent"""
-        if score >= 0.6:
+    def _classify_category(self, score: float, vendor_matches: List, keywords: List) -> str:
+        """Classify the intent category"""
+        if vendor_matches:
+            return "vendor"
+        
+        if score >= 0.7:
             return "buying"
-        elif score >= 0.4:
+        elif score >= 0.5:
             return "strong_interest"
-        elif score >= 0.2:
+        elif score >= 0.3:
             return "researching"
-        elif high or medium:
-            return "mild_interest"
-        else:
+        elif any(k in keywords for k in self.LOW_INTENT_KEYWORDS):
             return "discussion"
+        else:
+            return "low_intent"
     
-    def is_high_intent(self, text: str, threshold: float = 0.5) -> bool:
-        """Quick check if text has high buying intent"""
+    def _calculate_confidence(self, text: str, keywords_matched: List) -> float:
+        """Calculate confidence in the intent score"""
+        # More keywords = higher confidence
+        keyword_confidence = min(len(keywords_matched) / 3, 1.0)
+        
+        # Longer text = more context = higher confidence (up to a point)
+        text_length = len(text.split())
+        length_confidence = min(text_length / 20, 1.0)
+        
+        # Very short text = low confidence
+        if text_length < 5:
+            length_confidence = 0.3
+        
+        return (keyword_confidence * 0.6) + (length_confidence * 0.4)
+    
+    def is_buyer(self, text: str, threshold: float = 0.5) -> bool:
+        """
+        Quick check if text indicates a buyer
+        
+        Args:
+            text: The text to analyze
+            threshold: Minimum score to be considered a buyer (default 0.5)
+            
+        Returns:
+            bool: True if buyer intent detected
+        """
         result = self.analyze(text)
-        return result.intent_score >= threshold and result.confidence >= 0.5
+        return result.intent_score >= threshold and result.is_buyer
+    
+    def score_batch(self, texts: List[str], query: str = "") -> List[IntentResult]:
+        """Analyze multiple texts at once"""
+        return [self.analyze(text, query) for text in texts]
 
 
-# Singleton
+# Example usage and testing
+if __name__ == "__main__":
+    service = IntentDetectionService()
+    
+    test_cases = [
+        # High intent - should be buyers
+        "I need a plumber ASAP! Please contact me.",
+        "Looking for a good CRM software. Any recommendations?",
+        "Where can I buy affordable web design services in Nairobi?",
+        "Urgent: Looking to hire a developer this week.",
+        
+        # Medium intent - researching
+        "What are the best options for accounting software?",
+        "Has anyone used XYZ Company before?",
+        
+        # Low intent - discussion
+        "What is CRM software?",
+        
+        # Vendors - should be filtered out
+        "I am a plumber offering services in Nairobi. Contact us!",
+        "We sell the best CRM software. Check our website.",
+        "For sale: Web design services. Best prices guaranteed!",
+    ]
+    
+    print("=" * 80)
+    print("Intent Detection AI - Test Results")
+    print("=" * 80)
+    
+    for text in test_cases:
+        result = service.analyze(text)
+        print(f"\nText: {text[:60]}...")
+        print(f"  Score: {result.intent_score} | Category: {result.intent_category}")
+        print(f"  Urgency: {result.buying_urgency} | Is Buyer: {result.is_buyer}")
+        print(f"  Keywords: {', '.join(result.keywords_matched[:5])}")
+
+
+# Singleton instance
 _intent_service = None
 
 
 def get_intent_service() -> IntentDetectionService:
-    """Get or create the intent detection service"""
+    """Get or create the intent detection service singleton"""
     global _intent_service
     if _intent_service is None:
         _intent_service = IntentDetectionService()
