@@ -279,9 +279,22 @@ def get_scrapers():
 
 @app.get("/api/leads")
 async def get_leads():
-    """Get all leads"""
+    """Get all leads - currently returns empty data"""
     return {
         "signals_scanned": 0,
         "buyers_found": 0,
         "leads": []
     }
+
+# TODO: Replace with real buyer signals
+# @app.get("/api/leads")
+# async def get_leads():
+#     return {
+#         "signals_scanned": 34,
+#         "buyers_found": 7,
+#         "leads": [
+#             {"platform": "Reddit", "keyword": "buy tires"},
+#             {"platform": "Twitter", "keyword": "need plumber"},
+#             {"platform": "Telegram", "keyword": "looking for iPhone"}
+#         ]
+#     }
