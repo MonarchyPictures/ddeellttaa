@@ -1,19 +1,10 @@
-# app/services/__init__.py
-"""
-Services module for Delta9 lead generation platform.
-"""
-
-# Kenya-optimized scoring (new structure)
-from .scoring import (
-    calculate_final_score,
-    score_lead_kenya,
-    MIN_ACCEPTABLE_SCORE,
-    KENYA_INTENT_THRESHOLD,
-)
+"""Delta-9 Services"""
+from .query_expansion import QueryExpansionService
+from .intent_detection import IntentDetectionService
+from .lead_verification import LeadVerificationService
 
 __all__ = [
-    "calculate_final_score",
-    "score_lead_kenya",
-    "MIN_ACCEPTABLE_SCORE",
-    "KENYA_INTENT_THRESHOLD",
+    "QueryExpansionService",
+    "IntentDetectionService", 
+    "LeadVerificationService",
 ]
