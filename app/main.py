@@ -7,7 +7,10 @@ app = FastAPI()
 
 # Mount static files
 app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
+
+# Mount assets only if directory exists (for Railway deployment)
+if os.path.exists("frontend/dist/assets"):
+    app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -17,7 +20,10 @@ async def home():
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard():
     """Serve the dashboard UI"""
-    return FileResponse("frontend/dist/index.html")
+    if os.path.exists("frontend/dist/index.html"):
+        return FileResponse("frontend/dist/index.html")
+    # Fallback to landing page if dashboard not built
+    return FileResponse("static/landing.html")
 
 @app.get("/health")
 def health():
