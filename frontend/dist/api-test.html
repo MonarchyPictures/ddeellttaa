@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a1a; color: #0f0; }
+        .success { color: #0f0; }
+        .error { color: #f00; }
+        .info { color: #ff0; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        pre { background: #000; padding: 10px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>Delta-9 API Connection Test</h1>
+    <div id="info"></div>
+    <hr>
+    <button onclick="testPing()">1. Test Ping</button>
+    <button onclick="testAgents()">2. Test Create Agent</button>
+    <button onclick="testHealth()">3. Test Health</button>
+    <hr>
+    <h2>Results:</h2>
+    <pre id="output"></pre>
+
+    <script>
+        const output = document.getElementById('output');
+        const info = document.getElementById('info');
+        
+        // Show current URL info
+        info.innerHTML = `
+            <p><strong>Current URL:</strong> ${window.location.href}</p>
+            <p><strong>API URL:</strong> /api (same origin)</p>
+        `;
+        
+        function log(msg, type = 'info') {
+            const time = new Date().toLocaleTimeString();
+            output.innerHTML += `<span class="${type}">[${time}] ${msg}</span>\n`;
+        }
+        
+        async function testPing() {
+            log('Testing /api/ping...', 'info');
+            try {
+                const start = Date.now();
+                const r = await fetch('/api/ping');
+                const time = Date.now() - start;
+                
+                if (r.ok) {
+                    const data = await r.json();
+                    log(`SUCCESS Ping (${time}ms): ${JSON.stringify(data)}`, 'success');
+                } else {
+                    log(`FAIL Ping: HTTP ${r.status}`, 'error');
+                    const text = await r.text();
+                    log(`Response: ${text}`, 'error');
+                }
+            } catch (e) {
+                log(`ERROR Ping: ${e.message}`, 'error');
+            }
+        }
+        
+        async function testAgents() {
+            log('Testing POST /api/agents/...', 'info');
+            try {
+                const start = Date.now();
+                const r = await fetch('/api/agents/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: 'Test Agent ' + Date.now(),
+                        query: 'test',
+                        location: 'Kenya',
+                        interval_hours: 2,
+                        duration_days: 7
+                    })
+                });
+                const time = Date.now() - start;
+                
+                if (r.ok) {
+                    const data = await r.json();
+                    log(`SUCCESS Agent (${time}ms):`, 'success');
+                    log(`   ID: ${data.id}`, 'success');
+                    log(`   Name: ${data.name}`, 'success');
+                } else {
+                    log(`FAIL Agent: HTTP ${r.status}`, 'error');
+                    try {
+                        const err = await r.json();
+                        log(`Error: ${JSON.stringify(err)}`, 'error');
+                    } catch {
+                        const text = await r.text();
+                        log(`Response: ${text}`, 'error');
+                    }
+                }
+            } catch (e) {
+                log(`ERROR Agent: ${e.message}`, 'error');
+            }
+        }
+        
+        async function testHealth() {
+            log('Testing /health...', 'info');
+            try {
+                const r = await fetch('/health');
+                if (r.ok) {
+                    const data = await r.json();
+                    log(`SUCCESS Health: ${JSON.stringify(data, null, 2)}`, 'success');
+                } else {
+                    log(`FAIL Health: HTTP ${r.status}`, 'error');
+                }
+            } catch (e) {
+                log(`ERROR Health: ${e.message}`, 'error');
+            }
+        }
+        
+        // Auto-run ping on load
+        testPing();
+    </script>
+</body>
+</html>

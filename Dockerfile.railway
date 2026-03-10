@@ -2,7 +2,7 @@
 FROM python:3.11-slim
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV PYTHONDONTWRYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PORT=8000
 
@@ -18,9 +18,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
+# Copy application code (including pre-built frontend)
 COPY app/ ./app/
 COPY static/ ./static/
+COPY frontend/dist/ ./frontend/dist/
 
 # Create static directories if they don't exist
 RUN mkdir -p static/images
