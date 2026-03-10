@@ -1,2 +1,48 @@
-fastapi
-uvicorn
+# Delta 9 - Production Requirements
+# Railway Deployment
+
+# Web Framework
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+
+# Database
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+psycopg2-binary>=2.9.9
+
+# Data Validation
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Security
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# Rate Limiting
+slowapi>=0.1.9
+
+# Caching & Tasks
+redis>=5.0.0
+celery>=5.3.0
+
+# HTTP Client
+httpx>=0.25.0
+
+# Web Scraping
+beautifulsoup4>=4.12.0
+lxml>=4.9.3
+
+# Environment
+python-dotenv>=1.0.0
+
+# Logging
+structlog>=23.2.0
+
+# Monitoring
+prometheus-client>=0.19.0
+sentry-sdk[fastapi]>=1.38.0
+
+# Utilities
+phonenumbers>=8.13.0
+email-validator>=2.1.0

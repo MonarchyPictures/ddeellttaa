@@ -2,13 +2,19 @@
 FROM python:3.11-slim
 
 # Set environment variables
-ENV PYTHONDONTWRYTECODE=1 \
+ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PORT=8000
+    PORT=8000 \
+    PYTHONFAULTHANDLER=1 \
+    PYTHONHASHSEED=random \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    libpq-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Set work directory
@@ -23,15 +29,18 @@ COPY app/ ./app/
 COPY static/ ./static/
 COPY frontend/dist/ ./frontend/dist/
 
-# Create static directories if they don't exist
-RUN mkdir -p static/images
+# Create necessary directories
+RUN mkdir -p static/images sessions
+
+# Verify frontend dist exists
+RUN if [ ! -d "frontend/dist" ]; then echo "WARNING: frontend/dist not found"; fi
 
 # Expose port
 EXPOSE $PORT
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/')" || exit 1
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
 # Start command (PORT is set by Railway)
-CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1
