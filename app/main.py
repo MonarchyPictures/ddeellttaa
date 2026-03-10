@@ -278,12 +278,10 @@ def get_scrapers():
     return {"scrapers": []}
 
 @app.get("/api/leads")
-def get_leads():
+async def get_leads():
     """Get all leads"""
     return {
-        "leads": [
-            {"id": "1", "title": "Looking for Solar Panels", "phone": "0712345678", "badge": "HOT"},
-            {"id": "2", "title": "Need Cement Supplier", "phone": "0723456789", "badge": "WARM"},
-        ],
-        "total": 2
+        "signals_scanned": 0,
+        "buyers_found": 0,
+        "leads": []
     }
