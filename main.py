@@ -23,12 +23,3 @@ except Exception as e:
     print(f"  ERROR importing app: {e}")
     sys.exit(1)
 
-# Start the server
-import uvicorn
-uvicorn.run(
-    app, 
-    host=host, 
-    port=port, 
-    log_level="info",
-    access_log=True
-)
