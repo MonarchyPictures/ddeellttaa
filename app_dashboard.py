@@ -29,7 +29,12 @@ import uvicorn
 app = FastAPI(title="Delta 9 Dashboard", version="3.0.0")
 
 # Mount static files directory
-app.mount("/static", StaticFiles(directory="static"), name="static")
+import os
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.exists(static_dir):
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
+else:
+    print(f"WARNING: Static directory not found at {static_dir}")
 
 # ============================================================================
 # DATA MODELS
