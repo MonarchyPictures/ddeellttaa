@@ -210,6 +210,24 @@ def dashboard():
             <button class="nav-item">🕵️<span>Agents</span></button>
             <button class="nav-item">⚙️<span>Config</span></button>
         </nav>
+
+        <script>
+        async function loadDashboard() {
+            try {
+                const res = await fetch("/api/leads");
+                const data = await res.json();
+
+                document.body.innerHTML += `
+                    <pre>${JSON.stringify(data, null, 2)}</pre>
+                `;
+            } catch (err) {
+                console.error(err);
+                document.body.innerHTML += "<p>Failed to load dashboard data</p>";
+            }
+        }
+
+        loadDashboard();
+        </script>
     </body>
     </html>
     """
@@ -258,3 +276,14 @@ def get_agents():
 def get_scrapers():
     """Get all scrapers"""
     return {"scrapers": []}
+
+@app.get("/api/leads")
+def get_leads():
+    """Get all leads"""
+    return {
+        "leads": [
+            {"id": "1", "title": "Looking for Solar Panels", "phone": "0712345678", "badge": "HOT"},
+            {"id": "2", "title": "Need Cement Supplier", "phone": "0723456789", "badge": "WARM"},
+        ],
+        "total": 2
+    }
