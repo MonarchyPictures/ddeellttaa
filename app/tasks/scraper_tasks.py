@@ -1,6 +1,6 @@
 """
-Celery Tasks for Scraper Workers
-Distributed scraping with Redis task queue
+Celery Tasks for Scraper Workers - Signal Stream Version
+Scrapers publish to Signal Stream, processors consume from stream
 """
 import asyncio
 from datetime import datetime
@@ -8,31 +8,29 @@ from typing import List, Dict, Optional
 from celery import chain, group, chord
 
 from app.core.celery_config import celery_app
+from app.services.signal_stream import get_signal_producer, Signal
 from app.services.query_expansion import get_expansion_service
-from app.services.intent_detection import get_intent_service
-from app.services.lead_verification import get_verification_service
 from app.scrapers.reddit_scraper import RedditScraper
 from app.scrapers.twitter_scraper import TwitterScraper
 from app.scrapers.forum_scraper import ForumScraper
-from app.models.lead import SessionLocal, Signal, Lead, SearchQuery
 
 
 @celery_app.task(bind=True, max_retries=3)
 def scrape_reddit(self, query: str, search_query_id: Optional[int] = None) -> Dict:
     """
-    Celery task to scrape Reddit
+    Scrape Reddit and publish signals to stream
     
     Args:
         query: Search query
         search_query_id: Optional database ID for tracking
         
     Returns:
-        Dict with scraped signals
+        Dict with scraping results
     """
     print(f"[Worker] Scraping Reddit for: {query}")
     
     try:
-        # Run async scraper in sync context
+        # Run async scraper
         scraper = RedditScraper()
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -43,72 +41,69 @@ def scrape_reddit(self, query: str, search_query_id: Optional[int] = None) -> Di
             loop.run_until_complete(scraper.close())
             loop.close()
         
-        # Process results
-        signals = []
-        intent_service = get_intent_service()
+        # Publish signals to stream
+        producer = get_signal_producer()
+        signals_published = 0
         
         for result in results:
-            # Analyze intent
-            full_text = f"{result.title} {result.content}"
-            intent = intent_service.analyze(full_text, query)
+            # Skip deleted/invalid authors
+            if not result.author or result.author == '[deleted]':
+                continue
             
-            signal_data = {
-                "external_id": result.external_id,
-                "source": "reddit",
-                "title": result.title,
-                "content": result.content[:1000],
-                "raw_content": result.content,
-                "author": result.author,
-                "source_url": result.url,
-                "query_matched": query,
-                "subreddit": result.subreddit,
-                "posted_at": result.posted_at.isoformat() if result.posted_at else None,
-                "intent_score": intent.intent_score,
-                "intent_category": intent.intent_category,
-                "buying_urgency": intent.buying_urgency,
-                "keywords_matched": intent.keywords_matched,
-                "discovered_at": datetime.utcnow().isoformat(),
-                "metadata": result.metadata or {},
-                "is_processed": False,
-                "is_lead": intent.intent_score >= 0.5,
-            }
-            signals.append(signal_data)
+            text = f"{result.title} {result.content}".strip()
+            
+            # Create signal
+            signal = Signal(
+                id=result.external_id,
+                text=text,
+                platform='reddit',
+                url=result.url,
+                author=result.author,
+                timestamp=result.posted_at.isoformat() if result.posted_at else datetime.utcnow().isoformat(),
+                query=query,
+                metadata={
+                    'subreddit': result.subreddit,
+                    'score': result.metadata.get('score', 0),
+                    'num_comments': result.metadata.get('num_comments', 0),
+                }
+            )
+            
+            # Publish to stream
+            success = producer.send_signal(
+                text=text,
+                platform='reddit',
+                url=result.url,
+                author=result.author,
+                query=query,
+                metadata={
+                    'subreddit': result.subreddit,
+                    'score': result.metadata.get('score', 0),
+                },
+                signal_id=result.external_id,
+            )
+            
+            if success:
+                signals_published += 1
         
-        # Store in database
-        db = SessionLocal()
-        try:
-            for signal_data in signals:
-                # Check for duplicates
-                existing = db.query(Signal).filter(
-                    Signal.external_id == signal_data["external_id"]
-                ).first()
-                
-                if not existing:
-                    signal = Signal(**signal_data)
-                    db.add(signal)
-            
-            db.commit()
-        finally:
-            db.close()
+        print(f"[Worker] Reddit: Published {signals_published} signals to stream")
         
         return {
             "task_id": self.request.id,
             "source": "reddit",
             "query": query,
-            "signals_found": len(signals),
-            "high_intent_signals": len([s for s in signals if s["intent_score"] >= 0.5]),
+            "scraped_count": len(results),
+            "signals_published": signals_published,
             "status": "completed",
         }
         
     except Exception as exc:
         print(f"[Worker] Reddit scrape failed: {exc}")
-        # Retry with exponential backoff
         raise self.retry(exc=exc, countdown=60 * (2 ** self.request.retries))
 
 
 @celery_app.task(bind=True, max_retries=3)
 def scrape_twitter(self, query: str, search_query_id: Optional[int] = None) -> Dict:
-    """Celery task to scrape Twitter"""
+    """Scrape Twitter and publish signals to stream"""
     print(f"[Worker] Scraping Twitter for: {query}")
     
     try:
@@ -122,56 +117,36 @@ def scrape_twitter(self, query: str, search_query_id: Optional[int] = None) -> D
             loop.run_until_complete(scraper.close())
             loop.close()
         
-        signals = []
-        intent_service = get_intent_service()
+        producer = get_signal_producer()
+        signals_published = 0
         
         for result in results:
-            full_text = f"{result.title} {result.content}"
-            intent = intent_service.analyze(full_text, query)
+            text = result.content
             
-            signal_data = {
-                "external_id": result.external_id,
-                "source": "twitter",
-                "title": result.title,
-                "content": result.content[:1000],
-                "raw_content": result.content,
-                "author": result.author,
-                "source_url": result.url,
-                "query_matched": query,
-                "posted_at": result.posted_at.isoformat() if result.posted_at else None,
-                "intent_score": intent.intent_score,
-                "intent_category": intent.intent_category,
-                "buying_urgency": intent.buying_urgency,
-                "keywords_matched": intent.keywords_matched,
-                "discovered_at": datetime.utcnow().isoformat(),
-                "metadata": result.metadata or {},
-                "is_processed": False,
-                "is_lead": intent.intent_score >= 0.5,
-            }
-            signals.append(signal_data)
+            success = producer.send_signal(
+                text=text,
+                platform='twitter',
+                url=result.url,
+                author=result.author,
+                query=query,
+                metadata={
+                    'likes': result.metadata.get('likes', 0),
+                    'retweets': result.metadata.get('retweets', 0),
+                },
+                signal_id=result.external_id,
+            )
+            
+            if success:
+                signals_published += 1
         
-        # Store in database
-        db = SessionLocal()
-        try:
-            for signal_data in signals:
-                existing = db.query(Signal).filter(
-                    Signal.external_id == signal_data["external_id"]
-                ).first()
-                
-                if not existing:
-                    signal = Signal(**signal_data)
-                    db.add(signal)
-            
-            db.commit()
-        finally:
-            db.close()
+        print(f"[Worker] Twitter: Published {signals_published} signals to stream")
         
         return {
             "task_id": self.request.id,
             "source": "twitter",
             "query": query,
-            "signals_found": len(signals),
-            "high_intent_signals": len([s for s in signals if s["intent_score"] >= 0.5]),
+            "scraped_count": len(results),
+            "signals_published": signals_published,
             "status": "completed",
         }
         
@@ -182,7 +157,7 @@ def scrape_twitter(self, query: str, search_query_id: Optional[int] = None) -> D
 
 @celery_app.task(bind=True, max_retries=3)
 def scrape_forum(self, query: str, search_query_id: Optional[int] = None) -> Dict:
-    """Celery task to scrape Forums"""
+    """Scrape Forums and publish signals to stream"""
     print(f"[Worker] Scraping Forums for: {query}")
     
     try:
@@ -196,57 +171,37 @@ def scrape_forum(self, query: str, search_query_id: Optional[int] = None) -> Dic
             loop.run_until_complete(scraper.close())
             loop.close()
         
-        signals = []
-        intent_service = get_intent_service()
+        producer = get_signal_producer()
+        signals_published = 0
         
         for result in results:
-            full_text = f"{result.title} {result.content}"
-            intent = intent_service.analyze(full_text, query)
+            text = f"{result.title} {result.content}".strip()
             
-            signal_data = {
-                "external_id": result.external_id,
-                "source": "forum",
-                "title": result.title,
-                "content": result.content[:1000],
-                "raw_content": result.content,
-                "author": result.author,
-                "source_url": result.url,
-                "query_matched": query,
-                "subreddit": result.subreddit,  # Used as forum name
-                "posted_at": result.posted_at.isoformat() if result.posted_at else None,
-                "intent_score": intent.intent_score,
-                "intent_category": intent.intent_category,
-                "buying_urgency": intent.buying_urgency,
-                "keywords_matched": intent.keywords_matched,
-                "discovered_at": datetime.utcnow().isoformat(),
-                "metadata": result.metadata or {},
-                "is_processed": False,
-                "is_lead": intent.intent_score >= 0.5,
-            }
-            signals.append(signal_data)
+            success = producer.send_signal(
+                text=text,
+                platform='forum',
+                url=result.url,
+                author=result.author,
+                query=query,
+                metadata={
+                    'forum_name': result.subreddit,  # Used as forum name
+                    'views': result.metadata.get('views', 0),
+                    'replies': result.metadata.get('replies', 0),
+                },
+                signal_id=result.external_id,
+            )
+            
+            if success:
+                signals_published += 1
         
-        # Store in database
-        db = SessionLocal()
-        try:
-            for signal_data in signals:
-                existing = db.query(Signal).filter(
-                    Signal.external_id == signal_data["external_id"]
-                ).first()
-                
-                if not existing:
-                    signal = Signal(**signal_data)
-                    db.add(signal)
-            
-            db.commit()
-        finally:
-            db.close()
+        print(f"[Worker] Forum: Published {signals_published} signals to stream")
         
         return {
             "task_id": self.request.id,
             "source": "forum",
             "query": query,
-            "signals_found": len(signals),
-            "high_intent_signals": len([s for s in signals if s["intent_score"] >= 0.5]),
+            "scraped_count": len(results),
+            "signals_published": signals_published,
             "status": "completed",
         }
         
@@ -258,9 +213,7 @@ def scrape_forum(self, query: str, search_query_id: Optional[int] = None) -> Dic
 @celery_app.task
 def scrape_all_sources(query: str, expand: bool = True) -> Dict:
     """
-    Launch parallel scraper tasks for all sources
-    
-    This uses Celery's group to run all scrapers in parallel
+    Launch parallel scrapers that all publish to the Signal Stream
     """
     print(f"[Worker] Launching parallel scrape for: {query}")
     
@@ -280,14 +233,12 @@ def scrape_all_sources(query: str, expand: bool = True) -> Dict:
     
     # Create parallel task groups for each query
     for q in queries:
-        # Create a group of tasks to run in parallel
         job = group(
             scrape_reddit.s(q),
             scrape_twitter.s(q),
             scrape_forum.s(q),
         )
         
-        # Execute the group
         result = job.apply_async()
         
         results["tasks"].append({
@@ -300,103 +251,30 @@ def scrape_all_sources(query: str, expand: bool = True) -> Dict:
 
 
 @celery_app.task
-def process_signal(signal_id: int) -> Dict:
-    """
-    Process a single signal to create/update lead
-    
-    This is called after signals are scraped
-    """
-    db = SessionLocal()
-    try:
-        signal = db.query(Signal).filter(Signal.id == signal_id).first()
-        if not signal:
-            return {"error": "Signal not found"}
-        
-        # Check if author already has a lead
-        existing_lead = db.query(Lead).filter(
-            Lead.username == signal.author
-        ).first()
-        
-        if existing_lead:
-            # Update existing lead
-            existing_lead.signal_ids = existing_lead.signal_ids or []
-            if signal.id not in existing_lead.signal_ids:
-                existing_lead.signal_ids.append(signal.id)
-            
-            existing_lead.sources = list(set(
-                (existing_lead.sources or []) + [signal.source]
-            ))
-            
-            # Recalculate scores
-            signals_for_author = db.query(Signal).filter(
-                Signal.author == signal.author
-            ).all()
-            
-            avg_intent = sum(s.intent_score for s in signals_for_author) / len(signals_for_author)
-            existing_lead.intent_score = avg_intent
-            
-            signal.is_processed = True
-            signal.lead_id = existing_lead.id
-            db.commit()
-            
-            return {
-                "action": "updated",
-                "lead_id": existing_lead.id,
-                "signal_id": signal_id,
-            }
-        else:
-            # Create new lead
-            lead = Lead(
-                signal_ids=[signal.id],
-                sources=[signal.source],
-                username=signal.author,
-                intent_score=signal.intent_score,
-                intent_category=signal.intent_category,
-                buying_urgency=signal.buying_urgency,
-                profile_urls={signal.source: signal.source_url},
-                intent_signals=[signal.content[:300]],
-                status="new",
-                verification_score=0.3,  # Initial score
-            )
-            
-            db.add(lead)
-            db.flush()  # Get lead.id
-            
-            signal.is_processed = True
-            signal.lead_id = lead.id
-            signal.is_lead = True
-            
-            db.commit()
-            
-            return {
-                "action": "created",
-                "lead_id": lead.id,
-                "signal_id": signal_id,
-            }
-    finally:
-        db.close()
-
-
-@celery_app.task
 def search_and_process(query: str, expand: bool = True) -> Dict:
     """
-    Complete search workflow:
-    1. Scrape all sources in parallel
-    2. Process high-intent signals into leads
-    3. Return results
+    Complete search workflow with Signal Stream:
+    1. Scrape all sources (publish to stream)
+    2. Process signals from stream (intent detection)
+    3. Create leads from high-intent signals
+    
+    The actual processing happens via signal_pipeline tasks
+    that consume from the Redis stream.
     """
     print(f"[Worker] Full workflow for: {query}")
     
-    # Step 1: Scrape all sources
+    # Step 1: Scrape all sources (they publish to stream)
     scrape_result = scrape_all_sources(query, expand)
     
-    # Wait for scrape tasks to complete (in production, use callback)
-    # For now, return the task IDs for polling
+    # Step 2: Start stream consumer to process signals
+    from app.tasks.signal_pipeline import consume_signal_stream
+    consumer_task = consume_signal_stream.delay(duration=300)  # 5 minutes
     
     return {
         "workflow": "search_and_process",
         "query": query,
         "scrape_tasks": scrape_result,
+        "consumer_task_id": consumer_task.id,
         "status": "initiated",
-        "message": "Scraping tasks launched. Check /api/tasks/status for progress.",
+        "message": "Scrapers publishing to stream. Consumer processing signals.",
     }

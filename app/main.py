@@ -50,6 +50,10 @@ from app.core.celery_config import celery_app, check_celery_health
 # Worker Manager
 from app.workers.worker_manager import get_worker_manager
 
+# Signal Stream
+from app.services.signal_stream import get_signal_stream, get_signal_producer
+from app.api.signal_stream import router as signal_stream_router
+
 # Environment variables
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
 DEBUG = os.getenv("DEBUG", "false").lower() == "true"
@@ -135,6 +139,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 if os.path.isdir("frontend/dist/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
     print("✅ Mounted /assets")
+
+# Include Signal Stream API routes
+app.include_router(signal_stream_router)
 
 
 # ============================================================================
