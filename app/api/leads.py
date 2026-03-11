@@ -73,6 +73,8 @@ class LeadFeedFormatter:
 async def get_leads_feed(
     q: Optional[str] = Query(None, description="Search query"),
     platform: Optional[str] = Query(None, description="Filter by platform"),
+    sources: Optional[List[str]] = Query(None, description="Filter by multiple sources"),
+    freshness: Optional[List[str]] = Query(None, description="Filter by freshness: 24h, 3d, 7d"),
     min_intent: float = Query(0.5, description="Minimum intent score"),
     min_verification: float = Query(0.5, description="Minimum verification score"),
     status: Optional[str] = Query("new", description="Lead status"),
@@ -81,9 +83,12 @@ async def get_leads_feed(
     offset: int = Query(0),
     db: Session = Depends(get_db)
 ):
-    """Get real-time leads feed"""
+    """Get real-time leads feed with source and freshness filtering"""
+    from datetime import datetime, timedelta
+    
     query = db.query(Lead)
     
+    # Text search
     if q:
         search_filter = or_(
             Lead.username.ilike(f"%{q}%"),
@@ -92,9 +97,32 @@ async def get_leads_feed(
         )
         query = query.filter(search_filter)
     
+    # Single platform filter (backward compatibility)
     if platform:
         from sqlalchemy import text
         query = query.filter(text(f"'{platform}' = ANY(sources)"))
+    
+    # Multiple sources filter
+    if sources and len(sources) > 0:
+        from sqlalchemy import text
+        source_conditions = [f"'{s}' = ANY(sources)" for s in sources]
+        query = query.filter(text(" OR ".join(source_conditions)))
+    
+    # Freshness filter
+    if freshness and len(freshness) > 0:
+        now = datetime.utcnow()
+        freshness_conditions = []
+        
+        for f in freshness:
+            if f == "24h":
+                freshness_conditions.append(Lead.first_seen >= now - timedelta(hours=24))
+            elif f == "3d":
+                freshness_conditions.append(Lead.first_seen >= now - timedelta(days=3))
+            elif f == "7d":
+                freshness_conditions.append(Lead.first_seen >= now - timedelta(days=7))
+        
+        if freshness_conditions:
+            query = query.filter(or_(*freshness_conditions))
     
     if enriched_only:
         query = query.filter(Lead.email.isnot(None))
@@ -122,6 +150,8 @@ async def get_leads_feed(
         "query": q,
         "filters": {
             "platform": platform,
+            "sources": sources,
+            "freshness": freshness,
             "min_intent": min_intent,
             "enriched_only": enriched_only,
         },

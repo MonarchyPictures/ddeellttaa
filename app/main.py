@@ -34,8 +34,10 @@ from app.tasks.scraper_tasks import (
     scrape_twitter,
     scrape_forum,
     scrape_all_sources,
-    process_signal,
     search_and_process,
+)
+from app.tasks.signal_pipeline import (
+    process_signal_stream as process_signal,
 )
 from app.tasks.lead_tasks import (
     create_lead_from_signals,
@@ -54,6 +56,12 @@ from app.workers.worker_manager import get_worker_manager
 from app.services.signal_stream import get_signal_stream, get_signal_producer
 from app.api.signal_stream import router as signal_stream_router
 from app.api.leads import router as leads_router
+
+# NEW: Hardened Architecture Components
+from app.startup import Delta9Application
+from app.core.system_guardian import get_guardian
+from app.pipeline.lead_pipeline import get_pipeline
+from app.api.api import api_router  # Includes guardian routes
 
 # Environment variables
 ENVIRONMENT = os.getenv("ENVIRONMENT", "production")
@@ -95,10 +103,11 @@ manager = ConnectionManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan handler"""
+    """Application lifespan handler - Hardened Architecture"""
     print(f"🚀 Delta 9 Starting...")
     print(f"   Environment: {ENVIRONMENT}")
     print(f"   Port: {PORT}")
+    print(f"   Architecture: HARDENED v2.0")
     
     # Initialize database
     init_db()
@@ -111,9 +120,28 @@ async def lifespan(app: FastAPI):
     else:
         print(f"⚠️  Celery/Redis: {health.get('message', 'not connected')}")
     
+    # NEW: Initialize hardened architecture
+    print("\n🔧 Initializing Hardened Architecture...")
+    delta9 = Delta9Application()
+    success = await delta9.startup()
+    
+    if not success:
+        print("💥 CRITICAL: Delta-9 startup failed!")
+        raise RuntimeError("Startup failed")
+    
+    # Store in app state
+    app.state.delta9 = delta9
+    app.state.guardian = get_guardian()
+    app.state.pipeline = get_pipeline()
+    
+    print("\n🎉 DELTA-9 FULLY OPERATIONAL")
+    print("=" * 50)
+    
     yield
     
-    print("👋 Delta 9 Shutting down...")
+    # Shutdown
+    print("\n👋 Delta 9 Shutting down...")
+    await delta9.shutdown()
 
 
 # Create FastAPI app
@@ -144,6 +172,7 @@ if os.path.isdir("frontend/dist/assets"):
 # Include API routes
 app.include_router(signal_stream_router)
 app.include_router(leads_router)
+app.include_router(api_router)  # Includes guardian routes
 
 
 # ============================================================================

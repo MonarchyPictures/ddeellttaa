@@ -31,19 +31,25 @@ const Header = () => {
         <nav className="hidden md:flex items-center gap-1">
           {[
             { path: '/', label: 'Dashboard' },
+            { path: '/live', label: 'Live', highlight: true },
             { path: '/leads', label: 'Leads' },
             { path: '/agents', label: 'Agents' },
             { path: '/settings', label: 'Settings' },
-          ].map(({ path, label }) => (
+          ].map(({ path, label, highlight }) => (
             <Link
               key={path}
               to={path}
               className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
                 location.pathname === path
-                  ? 'bg-white/10 text-white'
-                  : 'text-white/40 hover:text-white/60 hover:bg-white/5'
+                  ? highlight 
+                    ? 'bg-green-500/20 text-green-400 border border-green-500/30'
+                    : 'bg-white/10 text-white'
+                  : highlight
+                    ? 'text-green-400 hover:bg-green-500/10 hover:text-green-300'
+                    : 'text-white/40 hover:text-white/60 hover:bg-white/5'
               }`}
             >
+              {highlight && <span className="mr-1.5">●</span>}
               {label}
             </Link>
           ))}

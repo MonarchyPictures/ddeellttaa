@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, ListFilter, Users, Settings } from 'lucide-react';
+import { LayoutDashboard, ListFilter, Users, Settings, Radio } from 'lucide-react';
 
 const BottomNav = () => {
   const location = useLocation();
@@ -8,6 +8,7 @@ const BottomNav = () => {
 
   const tabs = [
     { path: '/', label: 'Home', icon: LayoutDashboard },
+    { path: '/live', label: 'Live', icon: Radio, highlight: true },
     { path: '/leads', label: 'Leads', icon: ListFilter },
     { path: '/agents', label: 'Agents', icon: Users },
     { path: '/settings', label: 'Config', icon: Settings },
@@ -20,16 +21,22 @@ const BottomNav = () => {
           const Icon = tab.icon;
           const isActive = currentPath === tab.path;
           
+          const activeColor = tab.highlight ? 'text-green-400' : 'text-blue-500';
+          const activeBg = tab.highlight ? 'bg-green-500/10' : 'bg-blue-500/10';
+          
           return (
             <Link
               key={tab.path}
               to={tab.path}
               className={`flex flex-col items-center justify-center min-w-[64px] h-12 gap-1.5 transition-all active:scale-90 touch-none select-none ${
-                isActive ? 'text-blue-500' : 'text-white/40'
+                isActive ? activeColor : 'text-white/40'
               }`}
             >
-              <div className={`p-2 rounded-xl transition-all duration-300 ${isActive ? 'bg-blue-500/10 scale-110' : ''}`}>
+              <div className={`relative p-2 rounded-xl transition-all duration-300 ${isActive ? `${activeBg} scale-110` : ''}`}>
                 <Icon size={22} strokeWidth={isActive ? 2.5 : 2} />
+                {tab.highlight && !isActive && (
+                  <span className="absolute -top-0.5 -right-0.5 w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                )}
               </div>
               <span className={`text-[8px] font-bold uppercase tracking-[0.15em] transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-60'}`}>
                 {tab.label}

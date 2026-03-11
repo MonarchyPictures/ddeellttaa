@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Phone, MessageSquare, Bookmark, ExternalLink, MapPin, Clock, Flame, ShieldCheck, Send, CheckCircle2, Trash2 } from 'lucide-react';
+import { X, Phone, MessageSquare, Bookmark, ExternalLink, MapPin, Clock, Flame, ShieldCheck, Send, CheckCircle2, Trash2, MessageCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 const LeadDetail = ({ lead, onClose, onSave, onDelete, onUpdate }) => {
@@ -117,26 +117,47 @@ const LeadDetail = ({ lead, onClose, onSave, onDelete, onUpdate }) => {
             </div>
 
             <div>
-              <h3 className="text-white/40 text-xs font-bold uppercase tracking-widest mb-3">Platform & Original Post</h3>
-              <div className="flex items-center justify-between p-4 bg-white/5 rounded-xl border border-white/5">
-                <div className="flex items-center gap-3">
+              <h3 className="text-white/40 text-xs font-bold uppercase tracking-widest mb-3">Source & Verification</h3>
+              <div className="p-4 bg-white/5 rounded-xl border border-white/5 mb-4">
+                <div className="flex items-center gap-3 mb-3">
                   <div className="p-2 bg-blue-500/10 rounded-lg text-blue-500">
                     <ShieldCheck size={20} />
                   </div>
                   <div>
-                    <div className="text-white font-medium">{lead.source_platform}</div>
+                    <div className="text-white font-medium">{lead.source_platform || lead.source}</div>
                     <div className="text-white/40 text-xs">Verified Signal</div>
                   </div>
                 </div>
+                
+                {/* Group/Channel Info */}
+                {(lead.group_name || lead.subreddit || lead.channel_name) && (
+                  <div className="flex items-center gap-2 text-white/60 text-sm mb-3 pt-3 border-t border-white/5">
+                    <MessageSquare size={14} />
+                    <span>
+                      {lead.source === 'Telegram' ? 'Channel' : lead.source === 'Reddit' ? 'Subreddit' : 'Group'}: 
+                      <span className="text-white font-medium ml-1">
+                        {lead.group_name || lead.subreddit || lead.channel_name}
+                      </span>
+                    </span>
+                  </div>
+                )}
+              </div>
+              
+              {/* VIEW ORIGINAL POST - CRITICAL BUTTON */}
+              {(lead.post_link || lead.source_url || lead.url) && (
                 <a 
-                  href={lead.post_link} 
+                  href={lead.post_link || lead.source_url || lead.url} 
                   target="_blank" 
                   rel="noopener noreferrer"
-                  className="p-2 bg-white/5 hover:bg-white/10 rounded-lg transition-colors text-white/60"
+                  className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all shadow-lg shadow-blue-600/20 border border-blue-400/30"
                 >
                   <ExternalLink size={18} />
+                  View Original Post
+                  <span className="text-blue-200 text-xs normal-case font-bold ml-1">
+                    ({lead.source_platform || lead.source})
+                  </span>
                 </a>
-              </div>
+              )}
             </div>
 
             {/* Quick Actions */}

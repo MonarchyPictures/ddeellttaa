@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   Phone,
-  Bookmark,
   ExternalLink,
   MapPin,
   Clock,
@@ -9,14 +8,12 @@ import {
   ShieldCheck,
   Mail,
   MessageCircle,
-  User,
-  Trash2,
-  Zap,
   Globe,
   Activity,
-  Share2,
-  Copy,
-  Check
+  Check,
+  Link2,
+  Calendar,
+  Users
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import getApiUrl, { getApiKey } from '../config';
@@ -42,79 +39,76 @@ const LeadCard = ({ lead, onSave, onDelete, onClick, onStatusChange, onTap }) =>
     return Math.floor(seconds) + "s ago";
   };
 
-  const getStatusColor = (status) => {
-    const s = status?.toLowerCase() || 'new';
-    switch (s) {
-      case 'new': return 'text-green-500 bg-green-500/10 border-green-500/20';
-      case 'contacted': return 'text-yellow-500 bg-yellow-500/10 border-yellow-500/20';
-      case 'replied': return 'text-blue-500 bg-blue-500/10 border-blue-500/20';
-      case 'negotiating': return 'text-purple-500 bg-purple-500/10 border-purple-500/20';
-      case 'converted': return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
-      case 'dead': return 'text-red-500 bg-red-500/10 border-red-500/20';
-      default: return 'text-gray-500 bg-gray-500/10 border-gray-500/20';
+  // AI Intent Scoring
+  const aiScore = lead.ai_intent_score || 0;
+  const aiTemperature = lead.ai_temperature || (aiScore >= 75 ? 'HOT' : aiScore >= 50 ? 'WARM' : aiScore >= 25 ? 'COLD' : 'REJECT');
+  const aiReasoning = lead.ai_score_reasoning || '';
+  
+  const getTemperatureBadge = () => {
+    switch(aiTemperature) {
+      case 'HOT':
+        return { 
+          icon: "🔥", 
+          label: "HOT LEAD", 
+          bg: "bg-red-500", 
+          text: "text-white",
+          border: "border-red-600"
+        };
+      case 'WARM':
+        return { 
+          icon: "☀️", 
+          label: "WARM LEAD", 
+          bg: "bg-amber-500", 
+          text: "text-white",
+          border: "border-amber-600"
+        };
+      case 'COLD':
+        return { 
+          icon: "❄️", 
+          label: "COLD LEAD", 
+          bg: "bg-blue-500", 
+          text: "text-white",
+          border: "border-blue-600"
+        };
+      default:
+        return { 
+          icon: "⚪", 
+          label: "LOW PRIORITY", 
+          bg: "bg-gray-500", 
+          text: "text-white",
+          border: "border-gray-600"
+        };
     }
   };
 
-  const getMatchCue = (score, badge) => {
-    // Priority: Use backend badge if available
-    if (badge === 'HOT') return { icon: "🔥", label: "HOT BUYER", color: "text-red-500", border: "border-red-500/30", bg: "bg-red-500/10" };
-    if (badge === 'WARM') return { icon: "☀️", label: "WARM LEAD", color: "text-yellow-500", border: "border-yellow-500/30", bg: "bg-yellow-500/10" };
-    if (badge === 'COLD') return { icon: "❄️", label: "COLD", color: "text-blue-300", border: "border-blue-300/30", bg: "bg-blue-500/10" };
+  const tempBadge = getTemperatureBadge();
 
-    // Fallback to score
-    const s = score || 0;
-    if (s >= 0.7) return { icon: "🔥", label: "HOT BUYER", color: "text-red-500", border: "border-red-500/30", bg: "bg-red-500/10" };
-    if (s >= 0.4) return { icon: "☀️", label: "WARM LEAD", color: "text-yellow-500", border: "border-yellow-500/30", bg: "bg-yellow-500/10" };
-    return { icon: "❄️", label: "COLD", color: "text-blue-300", border: "border-blue-300/30", bg: "bg-blue-500/10" };
-  };
-
-  // Robust Field Access (Matches Dashboard.jsx)
-  // Standardized Fields: buyer_name, title, price, location, phone, source, intent_score
+  // Field mapping
   const timestamp = lead.timestamp || lead.request_timestamp || lead.created_at;
-  const isRecent = timestamp && (new Date() - new Date(timestamp)) < 24 * 60 * 60 * 1000;
-  
-  const score = lead.intent_score || lead.score || lead.buyer_match_score || 0;
-  const badge = lead.badge || lead.lead_badge;
-  
-  const isHighIntent = badge === 'HOT' || score >= 0.7;
-  const matchCue = getMatchCue(score, badge);
-
-  const whatsappLink = lead.whatsapp_url || lead.whatsapp_link;
-  const hasWhatsApp = !!whatsappLink;
-  
-  // Standardized field mapping
-  const buyerName = lead.buyer_name || lead.source || "Market Signal";
   const title = lead.title || lead.product || "General Request";
-  const price = lead.price ? `KES ${parseInt(lead.price).toLocaleString()}` : "Price Negotiable";
   const location = lead.location || "Kenya";
   const phone = lead.phone || lead.contact_phone;
   const source = lead.source || "Web";
-  const intentScore = lead.intent_score || 0.4;
-
-  const intentText = lead.buyer_request_snippet || lead.buyer_intent_quote || lead.intent || title;
   const sourceUrl = lead.source_url || lead.url;
+  const groupName = lead.group_name || lead.subreddit || lead.channel_name || lead.forum_name;
   
   const displayPhone = (phone) => {
     if (!phone) return null;
-    // Handle format 2547XXXXXXXX
     if (phone.startsWith('254') && phone.length === 12) {
-      return `+254 ${phone.slice(3, 5)} ${phone.slice(5, 8)} ${phone.slice(8)}`;
+      return `0${phone.slice(3, 5)} ${phone.slice(5, 8)} ${phone.slice(8)}`;
     }
     return phone;
   };
 
-
   const handleContact = async (e) => {
     e.stopPropagation();
     
-    // Always prioritize one-click WhatsApp if we have a contact
-    if (hasWhatsApp) {
+    if (lead.whatsapp_url || lead.whatsapp_link) {
       setIsGenerating(true);
       try {
         const apiUrl = getApiUrl();
         const apiKey = getApiKey();
         
-        // Fetch the prefilled WhatsApp URL from the backend
         const response = await fetch(`${apiUrl}/outreach/${lead.lead_id}/whatsapp`, {
           headers: { 'X-API-Key': apiKey }
         });
@@ -122,71 +116,26 @@ const LeadCard = ({ lead, onSave, onDelete, onClick, onStatusChange, onTap }) =>
         if (response.ok) {
           const data = await response.json();
           window.open(data.url, '_blank');
-          if (onTap) {
-            onTap(lead.lead_id || lead.id);
-          } else {
-            onStatusChange && onStatusChange(lead.lead_id || lead.id, 'contacted');
-          }
+          if (onTap) onTap(lead.lead_id || lead.id);
         } else {
-          // Fallback if the endpoint fails but we have a direct link
-          if (whatsappLink) {
-            window.open(whatsappLink, '_blank');
-            if (onTap) {
-              onTap(lead.lead_id || lead.id);
-            } else {
-              onStatusChange && onStatusChange(lead.lead_id || lead.id, 'contacted');
-            }
+          const link = lead.whatsapp_url || lead.whatsapp_link;
+          if (link) {
+            window.open(link, '_blank');
+            if (onTap) onTap(lead.lead_id || lead.id);
           }
         }
       } catch (err) {
         console.error("Outreach error:", err);
-        // Fallback to direct link on error
-        if (whatsappLink) {
-          window.open(whatsappLink, '_blank');
-          if (onTap) {
-            onTap(lead.lead_id || lead.id);
-          } else {
-            onStatusChange && onStatusChange(lead.lead_id || lead.id, 'contacted');
-          }
+        const link = lead.whatsapp_url || lead.whatsapp_link;
+        if (link) {
+          window.open(link, '_blank');
+          if (onTap) onTap(lead.lead_id || lead.id);
         }
       } finally {
         setIsGenerating(false);
       }
-    } else if (lead.source_url) {
-      window.open(lead.source_url, '_blank');
-    }
-  };
-
-  const handleCopyOutreach = (e) => {
-    e.stopPropagation();
-    const textToCopy = localOutreach || lead.outreach_suggestion;
-    if (textToCopy) {
-      navigator.clipboard.writeText(textToCopy);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  const handleGenerateOutreach = async (e) => {
-    e.stopPropagation();
-    setIsGenerating(true);
-    try {
-      const apiUrl = getApiUrl();
-      const apiKey = getApiKey();
-      const res = await fetch(`${apiUrl}/outreach/${lead.lead_id}`, {
-        method: 'POST',
-        headers: {
-          'X-API-Key': apiKey
-        }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setLocalOutreach(data.message);
-      }
-    } catch (err) {
-      console.error("Outreach generation failed:", err);
-    } finally {
-      setIsGenerating(false);
+    } else if (sourceUrl) {
+      window.open(sourceUrl, '_blank');
     }
   };
 
@@ -195,192 +144,172 @@ const LeadCard = ({ lead, onSave, onDelete, onClick, onStatusChange, onTap }) =>
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       whileHover={{ y: -4 }}
-      onClick={() => handleContact({ stopPropagation: () => {} })}
-      className="bg-[#0A0A0B] border border-white/5 rounded-3xl p-6 relative group hover:border-blue-500/30 transition-all duration-300 shadow-2xl cursor-pointer"
+      className="bg-[#0A0A0B] border border-white/10 rounded-2xl overflow-hidden relative group hover:border-white/20 transition-all duration-300 shadow-2xl"
     >
-      <div className="relative z-10">
-        {/* Header - Tags + Time */}
-        <div className="flex flex-col md:flex-row justify-between items-start gap-2 mb-6">
-          <div className="flex flex-wrap gap-2">
-            {isHighIntent && (
-              <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border border-red-500/30 bg-red-500/10 text-red-500 flex items-center gap-1">
-                🔥 High intent
-              </span>
-            )}
-            {hasWhatsApp && (
-              <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border border-green-500/30 bg-green-500/10 text-green-500 flex items-center gap-1">
-                💬 WhatsApp
-              </span>
-            )}
-            {isRecent && (
-              <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border border-blue-500/30 bg-blue-500/10 text-blue-500 flex items-center gap-1">
-                ⏱ Recent
-              </span>
-            )}
-            {lead.is_verified && (
-              <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border border-blue-500/30 bg-blue-500/10 text-blue-500 flex items-center gap-1">
-                <ShieldCheck size={10} />
-                VERIFIED
-              </span>
-            )}
-            {lead.tap_count > 0 && (
-              <span className="px-2.5 py-0.5 rounded-md text-[10px] font-black uppercase tracking-widest border border-blue-500/30 bg-blue-500/10 text-blue-500 flex items-center gap-1">
-                <Activity size={10} />
-                TAPS: {lead.tap_count}
-              </span>
-            )}
-          </div>
-          <span className="text-[10px] font-bold text-white/40 uppercase tracking-widest flex items-center gap-1">
-            <Clock size={10} />
-            {timeAgo(timestamp)}
+      {/* Temperature Header Bar */}
+      <div className={`${tempBadge.bg} px-6 py-3 flex items-center justify-between`}>
+        <div className="flex items-center gap-2">
+          <span className="text-2xl">{tempBadge.icon}</span>
+          <span className={`${tempBadge.text} font-black text-sm uppercase tracking-wider`}>
+            {tempBadge.label}
           </span>
+          {aiScore > 0 && (
+            <span className={`${tempBadge.text} text-xs font-bold ml-2 opacity-80`}>
+              {aiScore}/100
+            </span>
+          )}
         </div>
-
-        {/* User Info - ENRICHED */}
-        <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center text-white font-black text-sm italic">
-            {buyerName?.charAt(0) || 'B'}
+        {lead.is_verified && (
+          <div className="flex items-center gap-1 text-white/90">
+            <ShieldCheck size={16} />
+            <span className="text-xs font-bold uppercase">Verified</span>
           </div>
-          <div>
-            <div className="text-white font-bold text-sm flex items-center gap-2">
-              {buyerName}
-              {(phone) && <span className="text-green-500"><ShieldCheck size={12} /></span>}
-            </div>
-            <div className="text-white/40 text-[10px] font-black uppercase tracking-widest">
-              <p className="text-green-400 font-medium"> 
-                {phone ? (
-                  <a 
-                    href={`tel:${phone}`} 
-                    className="hover:text-green-300 transition-colors flex items-center gap-1"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    📞 {displayPhone(phone)}
-                  </a>
-                ) : (
-                  "📞 No phone found"
-                )}
-              </p> 
-            </div>
-          </div>
-        </div>
+        )}
+      </div>
 
-        {/* Product + Intent Text - READ */}
+      <div className="p-6">
+        {/* Product Title */}
         <div className="mb-4">
-          <div className="text-blue-500 text-[11px] font-black uppercase tracking-[0.2em] mb-1">{title}</div>
-          <h3 className="text-white font-black text-xl leading-tight group-hover:text-blue-400 transition-colors italic">
-            "{intentText}"
-          </h3>
-          <p className="text-white/60 text-xs font-bold mt-1">
-             💰 {price}
+          <h2 className="text-white font-bold text-xl mb-2">
+            {title}
+          </h2>
+          <div className="flex items-center gap-2 text-white/60 text-sm">
+            <Calendar size={14} />
+            <span>{timeAgo(timestamp)}</span>
+          </div>
+        </div>
+
+        {/* Intent Quote */}
+        <div className="bg-white/5 rounded-xl p-4 mb-5 border-l-4 border-blue-500">
+          <p className="text-white/90 text-lg italic leading-relaxed">
+            "{lead.text || lead.buyer_request_snippet || title}"
           </p>
-          {lead.buyer_request_snippet && lead.buyer_request_snippet !== intentText && (
-            <p className="text-white/40 text-xs mt-2 line-clamp-2 italic font-medium leading-relaxed">
-              ...{lead.buyer_request_snippet.substring(0, 150)}...
+          {aiReasoning && (
+            <p className="text-white/40 text-xs mt-2">
+              AI Analysis: {aiReasoning}
             </p>
           )}
         </div>
 
-        {/* Location + Source */}
-        <div className="flex flex-wrap items-center gap-4 mb-6">
-          <div className="flex items-center gap-1.5 text-white/60 text-xs font-bold">
-            <MapPin size={14} className="text-blue-500" />
-            <span>{location}</span>
-            {lead.distance_km > 0 && (
-              <span className="text-white/30 ml-1">({lead.distance_km}km)</span>
-            )}
+        {/* Trust Info Grid */}
+        <div className="grid grid-cols-2 gap-4 mb-5">
+          {/* Location */}
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center flex-shrink-0">
+              <MapPin size={18} className="text-blue-500" />
+            </div>
+            <div>
+              <div className="text-white/40 text-xs font-bold uppercase tracking-wider">Location</div>
+              <div className="text-white font-semibold">{location}</div>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 text-white/40 text-[10px] font-black uppercase tracking-widest">
-            <span>{source}</span>
+          
+          {/* Source */}
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center flex-shrink-0">
+              <Globe size={18} className="text-purple-500" />
+            </div>
+            <div>
+              <div className="text-white/40 text-xs font-bold uppercase tracking-wider">Source</div>
+              <div className="text-white font-semibold">{source}</div>
+            </div>
           </div>
-          <div className="flex items-center gap-1.5 text-white/40 text-[10px] font-black uppercase tracking-widest">
-            <span className={isHighIntent ? "text-green-500" : "text-yellow-500"}>Score: {Math.round(intentScore * 100)}%</span>
+          
+          {/* Posted Time */}
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center flex-shrink-0">
+              <Clock size={18} className="text-amber-500" />
+            </div>
+            <div>
+              <div className="text-white/40 text-xs font-bold uppercase tracking-wider">Posted</div>
+              <div className="text-white font-semibold">{timeAgo(timestamp)}</div>
+            </div>
           </div>
-          {sourceUrl && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                window.open(sourceUrl, '_blank');
-              }}
-              className="ml-auto text-blue-500 hover:text-blue-400 text-[10px] font-black uppercase tracking-widest flex items-center gap-1 transition-colors cursor-pointer"
-            >
-              <ExternalLink size={12} />
-              SOURCE
-            </button>
-          )}
+          
+          {/* Group/Channel */}
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-green-500/20 flex items-center justify-center flex-shrink-0">
+              <Users size={18} className="text-green-500" />
+            </div>
+            <div>
+              <div className="text-white/40 text-xs font-bold uppercase tracking-wider">
+                {source === 'Telegram' ? 'Channel' : source === 'Reddit' ? 'Subreddit' : 'Group'}
+              </div>
+              <div className="text-white font-semibold truncate max-w-[150px]">
+                {groupName || 'Unknown'}
+              </div>
+            </div>
+          </div>
         </div>
 
-        {/* Suggested Outreach Section */}
-        {(localOutreach || lead.outreach_suggestion) && (
-          <div className="bg-slate-900 p-4 rounded-xl mt-4 border border-slate-700"> 
-            <div className="flex justify-between items-center mb-2"> 
-              <span className="text-sm text-slate-400"> 
-                ✨ AI Outreach Signal 
-              </span> 
-            </div> 
-            <p className="text-slate-200 italic"> 
-              {localOutreach || lead.outreach_suggestion} 
-            </p> 
+        {/* Phone Number - PROMINENT */}
+        {phone && (
+          <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 mb-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center">
+                  <Phone size={24} className="text-white" />
+                </div>
+                <div>
+                  <div className="text-green-400 text-xs font-bold uppercase tracking-wider">Phone Number</div>
+                  <div className="text-white font-black text-2xl tracking-wide">
+                    {displayPhone(phone)}
+                  </div>
+                </div>
+              </div>
+              <a 
+                href={`tel:${phone}`}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-green-500 hover:bg-green-400 text-white px-4 py-2 rounded-lg font-bold text-sm uppercase tracking-wider transition-colors"
+              >
+                Call
+              </a>
+            </div>
           </div>
         )}
 
-        {/* Primary Actions - TAP + COPY */}
-        <div className="flex flex-col md:flex-row gap-3">
-          {hasWhatsApp ? (
+        {/* View Original Post - CRITICAL */}
+        {sourceUrl && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              window.open(sourceUrl, '_blank');
+            }}
+            className="w-full bg-blue-600 hover:bg-blue-500 text-white font-black text-sm py-4 rounded-xl flex items-center justify-center gap-3 uppercase tracking-wider transition-all active:scale-95 shadow-lg shadow-blue-600/20 mb-2"
+          >
+            <ExternalLink size={20} />
+            View Original Post
+            <span className="text-blue-200 text-xs normal-case font-bold">
+              ({source})
+            </span>
+          </button>
+        )}
+        
+        <p className="text-center text-white/30 text-xs mb-5">
+          Opens the real message on {source} for verification
+        </p>
+
+        {/* Action Buttons */}
+        <div className="flex gap-3">
+          {(lead.whatsapp_url || lead.whatsapp_link) ? (
             <button
               onClick={handleContact}
               disabled={isGenerating}
-              className="flex-1 bg-green-600 hover:bg-green-500 text-white font-black text-sm py-4 rounded-xl flex items-center justify-center gap-3 uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-green-600/20 disabled:opacity-50 cursor-pointer"
+              className="flex-1 bg-green-600 hover:bg-green-500 text-white font-black text-sm py-4 rounded-xl flex items-center justify-center gap-2 uppercase tracking-wider transition-all active:scale-95 shadow-lg shadow-green-600/20"
             >
-              {isGenerating ? <Activity size={20} className="animate-spin" /> : <MessageCircle size={20} fill="white" />}
-              {isGenerating ? 'CONNECTING...' : 'TAP TO WHATSAPP'}
-            </button>
-          ) : lead.source_url ? (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                window.open(lead.source_url, '_blank');
-              }}
-              className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black text-sm py-4 rounded-xl flex items-center justify-center gap-3 uppercase tracking-widest transition-all active:scale-95 shadow-lg shadow-blue-600/20 cursor-pointer"
-            >
-              <ExternalLink size={20} />
-              OPEN SOURCE PLATFORM
+              {isGenerating ? <Activity size={20} className="animate-spin" /> : <MessageCircle size={20} />}
+              {isGenerating ? 'Connecting...' : 'WhatsApp'}
             </button>
           ) : (
-            <div className="flex-1 flex flex-col gap-2">
-              <button
-                disabled
-                className="w-full bg-white/5 text-white/20 font-black text-xs py-4 rounded-xl flex items-center justify-center gap-2 uppercase tracking-widest cursor-not-allowed border border-white/5"
-              >
-                <MessageCircle size={16} />
-                NO CONTACT LINK
-              </button>
-            </div>
-          )}
-
-          <button
-            onClick={handleContact}
-            disabled={isGenerating || !hasWhatsApp}
-            className={`px-6 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2 ${
-              hasWhatsApp 
-                ? 'bg-green-600/20 border border-green-500/30 text-green-500 hover:bg-green-600/30 hover:text-green-400 cursor-pointer' 
-                : 'bg-white/5 border border-white/10 text-white/20 cursor-not-allowed'
-            }`}
-          >
-            <MessageCircle size={18} />
-            {hasWhatsApp ? '💬 WHATSAPP BUYER' : 'NO CONTACT'}
-          </button>
-
-          {phone && (
-            <a
-              href={`tel:${phone}`}
-              onClick={(e) => e.stopPropagation()}
-              className="px-6 py-4 rounded-xl font-black text-sm uppercase tracking-widest transition-all active:scale-95 flex items-center justify-center gap-2 bg-blue-600/20 border border-blue-500/30 text-blue-500 hover:bg-blue-600/30 hover:text-blue-400 cursor-pointer"
+            <button
+              onClick={handleContact}
+              className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-black text-sm py-4 rounded-xl flex items-center justify-center gap-2 uppercase tracking-wider transition-all active:scale-95"
             >
-              <Phone size={18} />
-              CALL
-            </a>
+              <ExternalLink size={20} />
+              View Source
+            </button>
           )}
-
+          
           <button
             onClick={async (e) => {
               e.stopPropagation();
@@ -395,25 +324,23 @@ const LeadCard = ({ lead, onSave, onDelete, onClick, onStatusChange, onTap }) =>
                 if (res.ok) {
                   const data = await res.json();
                   await navigator.clipboard.writeText(data.message);
-                  setLocalOutreach(data.message);
                   setCopied(true);
                   setTimeout(() => setCopied(false), 2000);
                 }
               } catch (err) {
-                console.error("Instant outreach failed:", err);
+                console.error("Copy failed:", err);
               } finally {
                 setIsGenerating(false);
               }
             }}
-            disabled={isGenerating}
-            className={`px-6 py-4 rounded-xl border font-black text-sm uppercase tracking-widest transition-all active:scale-95 flex items-center gap-2 ${
+            className={`px-6 py-4 rounded-xl border font-black text-sm uppercase tracking-wider transition-all flex items-center gap-2 ${
               copied 
                 ? 'bg-green-500/20 border-green-500 text-green-500' 
-                : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
+                : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10'
             }`}
           >
-            {copied ? <Check size={18} /> : isGenerating ? <Activity size={18} className="animate-spin" /> : <Mail size={18} />}
-            {copied ? 'COPIED' : '📩 COPY OUTREACH'}
+            {copied ? <Check size={18} /> : <Mail size={18} />}
+            {copied ? 'Copied!' : 'Copy'}
           </button>
         </div>
       </div>

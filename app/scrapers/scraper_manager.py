@@ -110,7 +110,21 @@ class ScraperManager:
         }
     
     def _process_signal(self, result: ScrapeResult, query: str) -> Optional[Dict]:
-        """Process a scrape result into a signal with intent analysis"""
+        """Process a scrape result into a signal with intent analysis
+        
+        CORRECT LEAD INTELLIGENCE ARCHITECTURE:
+        Every lead must have 5 mandatory fields: text, phone, source, url, timestamp
+        
+        BUYER PHONE EXTRACTION RULE:
+        ONLY extract phone numbers from posts with verified buyer intent.
+        IF text contains buyer intent AND phone number is inside same message THEN accept
+        ELSE reject
+        
+        Buyer keywords: "looking for", "niko natafuta", "need", "anyone selling", etc.
+        Reject keywords: "selling", "available", "price", "call me", etc.
+        """
+        from app.utils.buyer_phone_extractor import BuyerPhoneExtractor
+        
         # Analyze intent
         full_text = f"{result.title} {result.content}"
         intent = self.intent_service.analyze(full_text, query)
@@ -119,16 +133,41 @@ class ScraperManager:
         if intent.confidence < 0.3:
             return None
         
+        # Extract phone ONLY from buyer posts (enforced rule)
+        extraction_result = BuyerPhoneExtractor.validate_and_extract(
+            full_text, 
+            source=result.source
+        )
+        
+        # Reject if not a valid buyer post with phone
+        if not extraction_result['is_valid_buyer']:
+            print(f"[ScraperManager] Rejected signal: {extraction_result['reason']}")
+            return None
+        
+        phone = extraction_result['phone']
+        
+        # Build timestamp
+        posted_at = result.posted_at.isoformat() if result.posted_at else datetime.utcnow().isoformat()
+        
         return {
-            "external_id": result.external_id,
+            # ═══════════════════════════════════════════════════════════════
+            # 5 MANDATORY FIELDS (Correct Lead Intelligence Architecture)
+            # ═══════════════════════════════════════════════════════════════
+            "text": full_text.strip(),
+            "phone": phone or "",  # Extracted or empty (will be validated)
             "source": result.source,
+            "url": result.url,
+            "timestamp": posted_at,
+            # ═══════════════════════════════════════════════════════════════
+            # Additional fields
+            "external_id": result.external_id,
             "title": result.title,
             "content": result.content[:500],  # Truncate
             "author": result.author,
             "source_url": result.url,
             "query_matched": query,
             "subreddit": result.subreddit,
-            "posted_at": result.posted_at.isoformat() if result.posted_at else None,
+            "posted_at": posted_at,
             "intent_score": intent.intent_score,
             "intent_category": intent.intent_category,
             "buying_urgency": intent.buying_urgency,
@@ -136,7 +175,35 @@ class ScraperManager:
             "confidence": intent.confidence,
             "discovered_at": datetime.utcnow().isoformat(),
             "metadata": result.metadata or {},
+            "contact": {
+                "phone": phone,
+            } if phone else {},
         }
+    
+    def _extract_phone(self, text: str) -> Optional[str]:
+        """Extract phone number from text"""
+        import re
+        
+        # Common phone patterns
+        patterns = [
+            r'\+?254[\s-]?[十七条5789][\s-]?\d{2}[\s-]?\d{2}[\s-]?\d{2}[\s-]?\d{2}',  # Kenya
+            r'\+?254\d{9}',  # Kenya compact
+            r'0[十七条5789]\d{8}',  # Kenya local
+            r'\+?\d{10,15}',  # International
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, text)
+            if match:
+                phone = match.group(0)
+                # Normalize
+                phone = re.sub(r'[\s\-\(\)]', '', phone)
+                if phone.startswith('0') and len(phone) == 10:
+                    phone = '254' + phone[1:]
+                if phone.startswith('+'):
+                    phone = phone[1:]
+                return phone
+        return None
     
     def _deduplicate_signals(self, signals: List[Dict]) -> List[Dict]:
         """Remove duplicate signals by external_id"""

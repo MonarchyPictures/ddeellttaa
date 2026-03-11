@@ -11,6 +11,7 @@ import Dashboard from './views/Dashboard';
 import Leads from './views/Leads';
 import Agents from './views/Agents';
 import Settings from './views/Settings';
+import LiveBuyersPage from './pages/LiveBuyersPage';
 import ToastContainer from './components/ToastContainer';
 
 const App = () => {
@@ -23,6 +24,7 @@ const App = () => {
             <Route path="/leads" element={<Leads />} />
             <Route path="/agents" element={<Agents />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/live" element={<LiveBuyersPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </Layout>

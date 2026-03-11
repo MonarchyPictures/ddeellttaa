@@ -15,6 +15,15 @@ from ..intelligence_v2 import (
     STRICT_PUBLIC
 )
 from app.config.runtime import INTENT_POINTS_FLOOR
+from ..utils.lead_validation import (
+    LeadValidator, 
+    FreshnessChecker, 
+    LeadQualificationValidator,
+    LeadFreshness
+)
+from ..utils.buyer_phone_extractor import BuyerPhoneExtractor
+from ..utils.phone_verification import KenyaPhoneVerifier
+from ..utils.intent_scorer import IntentScorer, LeadTemperature
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +31,46 @@ def ingest_signal(db: Session, signal: Dict[str, Any], product_query: str = "Unk
     """
     Standardized Ingestion Gate:
     1. Receives DUMB signal from scraper.
-    2. Runs Intelligence Layer (v2).
-    3. Enforces FLOOR threshold.
-    4. Maps to 10-field Lead schema.
+    2. VALIDATES: 5 mandatory fields (text, phone, source, url, timestamp)
+    3. FRESHNESS CHECK: Discard if > 7 days old
+    4. Runs Intelligence Layer (v2).
+    5. Enforces FLOOR threshold.
+    6. Maps to Lead schema.
+    
+    CORRECT LEAD INTELLIGENCE ARCHITECTURE:
+    Every lead MUST have 5 mandatory fields: text, phone, source, url, timestamp
+    If any are missing → discard lead immediately
+    
+    LEAD FRESHNESS FILTER:
+    - Fresh = < 24 hours old
+    - Warm = < 3 days old
+    - Cold = < 7 days old
+    - Discard = > 7 days old
     
     KENYA-ONLY: Rejects any signal that is not explicitly from Kenya.
     """
     from app.services.validation_service import VALIDATION_SERVICE
     
-    raw_text = signal.get("text", "")
-    source = signal.get("source", "unknown")
-    source_url = signal.get("url")
+    # ═══════════════════════════════════════════════════════════════
+    # STEP 0: MANDATORY FIELD + FRESHNESS VALIDATION
+    # ═══════════════════════════════════════════════════════════════
+    # Combined validation: checks 5 mandatory fields AND freshness
+    validated_lead = LeadQualificationValidator.validate_or_discard(signal)
+    if not validated_lead:
+        return None
+    
+    # Extract freshness metadata
+    freshness_metadata = validated_lead.get('_freshness', {})
+    freshness_label = freshness_metadata.get('freshness_label', 'unknown')
+    
+    logger.info(
+        f"[INGESTION] ✅ Lead qualified: source={signal.get('source')}, "
+        f"freshness={freshness_label}"
+    )
+    
+    raw_text = signal.get("text", "").strip()
+    source = signal.get("source", "unknown").strip()
+    source_url = signal.get("url", "").strip()
     location = signal.get("location", "Kenya")
     
     # --- KENYA LOCKING: STRICT LOCATION CHECK ---
@@ -66,12 +104,34 @@ def ingest_signal(db: Session, signal: Dict[str, Any], product_query: str = "Unk
     raw_intent = intent_points / 100.0
     if raw_intent > 1.0: raw_intent = 1.0
     
-    # 2. 🧠 Intelligence Layer: Semantic/Confidence Scoring
-    # For raw signals, semantic_score is a baseline of 0.5 unless we have comparison data
+    # 2. 🧠 AI INTENT SCORING (NEW)
+    # Score based on buying intent using NLP analysis
+    intent_score_result = IntentScorer.calculate_score(raw_text)
+    ai_intent_score = intent_score_result.score / 100.0  # Normalize to 0-1
+    ai_temperature = intent_score_result.temperature.value
+    
+    logger.info(
+        f"[INGESTION] AI Intent Score: {intent_score_result.score}/100 "
+        f"({ai_temperature}) - {intent_score_result.reasoning}"
+    )
+    
+    # Reject if AI score is too low (below COLD threshold)
+    if intent_score_result.temperature == LeadTemperature.REJECT:
+        logger.warning(
+            f"[INGESTION] ❌ Lead discarded - AI Intent too low: "
+            f"{intent_score_result.score}/100 - {intent_score_result.reasoning}"
+        )
+        return None
+    
+    # 3. 🧠 Intelligence Layer: Semantic/Confidence Scoring
+    # Combine traditional scoring with AI intent score
     semantic_baseline = 0.5 
     
+    # Blend traditional score with AI intent score (70% AI, 30% traditional)
+    blended_intent = (ai_intent_score * 0.7) + (raw_intent * 0.3)
+    
     final_score = calculate_final_intelligence_score(
-        raw_intent_score=raw_intent,
+        raw_intent_score=blended_intent,
         semantic_score=semantic_baseline,
         text=raw_text,
         source_name=source,
@@ -82,17 +142,28 @@ def ingest_signal(db: Session, signal: Dict[str, Any], product_query: str = "Unk
         }
     )
     
-    # 3. 🚦 Threshold Enforcement (Double Check)
-    # already handled by intent_points check, but keep final_score check if needed
+    # 4. 🚦 Threshold Enforcement (Double Check)
     if final_score < FLOOR:
         logger.info(f"SIGNAL REJECTED: Final Score {final_score} below floor {FLOOR}")
         return False
 
-    # 4. 📞 Contact Extraction (Moved from Scraper to Intelligence)
+    # 4. 📞 Contact Extraction (BUYER-ONLY VALIDATION)
+    # Re-validate that the phone came from a buyer post
+    buyer_extraction = BuyerPhoneExtractor.validate_and_extract(raw_text, source)
+    
+    if not buyer_extraction['is_valid_buyer']:
+        logger.warning(
+            f"[INGESTION] ❌ Lead discarded - Not a valid buyer post: "
+            f"{buyer_extraction['reason']}"
+        )
+        return None
+    
+    # Use the validated buyer phone
+    phone = buyer_extraction['phone']
+    
+    # Also extract other contact info
     contacts = extract_contact_info(raw_text)
-    # Merge with any contact info already found by scraper
     signal_contacts = signal.get("contact", {})
-    phone = signal_contacts.get("phone") or contacts.get("phone")
     whatsapp = signal_contacts.get("whatsapp") or contacts.get("whatsapp")
     email = signal_contacts.get("email") or contacts.get("email")
 
@@ -104,9 +175,14 @@ def ingest_signal(db: Session, signal: Dict[str, Any], product_query: str = "Unk
         #    if existing:
         #        return False
         
-        source_url = signal.get("url")
+        # Extract MANDATORY fields (already validated above)
+        mandatory_text = signal.get("text", "").strip()
+        mandatory_phone = signal.get("phone", "").strip()
+        mandatory_source = signal.get("source", "").strip()
+        mandatory_url = signal.get("url", "").strip()
+        mandatory_timestamp = signal.get("timestamp", "").strip()
         
-        # 5. 🗺️ Mapping to 10-field schema (+ internal metadata)
+        # 5. 🗺️ Mapping to Lead schema
         lead_id = uuid.uuid4()
         priority = classify_lead_priority(final_score)
         
@@ -114,24 +190,49 @@ def ingest_signal(db: Session, signal: Dict[str, Any], product_query: str = "Unk
         if not phone and not email:
             contact_flag = "missing_contact"
         
+        # Parse timestamp
+        try:
+            parsed_timestamp = datetime.fromisoformat(mandatory_timestamp.replace('Z', '+00:00'))
+        except (ValueError, AttributeError):
+            parsed_timestamp = datetime.utcnow()
+        
         db_lead = models.Lead(
             id=lead_id,
+            # ═══════════════════════════════════════════════════════════════
+            # 5 MANDATORY FIELDS (Correct Lead Intelligence Architecture)
+            # ═══════════════════════════════════════════════════════════════
+            text=mandatory_text,
+            phone=mandatory_phone,
+            source=mandatory_source,
+            url=mandatory_url,
+            timestamp=parsed_timestamp,
+            # ═══════════════════════════════════════════════════════════════
+            # LEAD FRESHNESS (auto-calculated)
+            # ═══════════════════════════════════════════════════════════════
+            freshness=freshness_label,
+            age_hours=age_hours,
+            # ═══════════════════════════════════════════════════════════════
+            # Additional fields
             buyer_name=signal.get("author") or "Market Signal",
-            contact_phone=phone,
+            contact_phone=phone or mandatory_phone,  # Use mandatory phone as fallback
             contact_email=email,
             contact_flag=contact_flag,
             product_category=product_query,
-            intent_score=raw_intent,
+            intent_score=blended_intent,  # Use AI-blended score
+            ai_intent_score=intent_score_result.score,
+            ai_temperature=ai_temperature,
+            ai_score_reasoning=intent_score_result.reasoning,
+            ai_score_breakdown=intent_score_result.breakdown,
             location_raw=signal.get("location", "Kenya"),
-            source_platform=source,
-            request_timestamp=datetime.fromisoformat(signal["timestamp"]) if signal.get("timestamp") else datetime.utcnow(),
+            source_platform=mandatory_source,
+            request_timestamp=parsed_timestamp,
             whatsapp_link=whatsapp,
-            source_url=source_url,
+            source_url=mandatory_url,
             buyer_request_snippet=raw_text[:500], # Keep snippet manageable
             urgency_level=priority,
             confidence_score=final_score,
-            contact_status="verified" if phone or whatsapp else "needs_outreach",
-            is_hot_lead=1 if final_score >= STRICT_PUBLIC else 0,
+            contact_status="verified" if (phone or whatsapp or mandatory_phone) else "needs_outreach",
+            is_hot_lead=1 if ai_temperature == "HOT" else 0,  # Use AI temperature
             tap_count=0,
             intent_type="BUYER"  # Explicitly mark as BUYER since we pre-filtered
         )
@@ -145,13 +246,29 @@ def ingest_signal(db: Session, signal: Dict[str, Any], product_query: str = "Unk
             extra_metadata={
                 "source": source,
                 "score": final_score,
-                "priority": priority
+                "ai_score": intent_score_result.score,
+                "ai_temperature": ai_temperature,
+                "ai_reasoning": intent_score_result.reasoning,
+                "priority": priority,
+                "buyer_validated": True,
+                "phone_source": "buyer_post",
+                "extraction_reason": buyer_extraction.get('reason', '')
             }
         )
         db.add(log)
         
         db.commit()
-        logger.info(f"SIGNAL ACCEPTED: {priority} lead saved from {source} (Score: {final_score})")
+        
+        # Get freshness info for logging
+        freshness_info = freshness_label.upper()
+        age_hours = freshness_metadata.get('age_hours', 0)
+        
+        logger.info(
+            f"SIGNAL ACCEPTED: {priority} lead saved from {mandatory_source} "
+            f"| Score: {final_score:.3f} "
+            f"| Freshness: {freshness_info} ({age_hours}h old) "
+            f"| Fields: text={len(mandatory_text)}ch, phone={mandatory_phone[:4]}..."
+        )
         return db_lead
         
     except Exception as e:

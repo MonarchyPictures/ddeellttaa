@@ -1,0 +1,20 @@
+# DELTA-9 RAILWAY DEPLOYMENT CONFIGURATION
+# https://railway.app
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+startCommand = "gunicorn -w 4 -k uvicorn.workers.UvicornWorker app.main:app --bind 0.0.0.0:$PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+
+[environments]
+[environments.production]
+numReplicas = 2
+
+[environments.staging]
+numReplicas = 1

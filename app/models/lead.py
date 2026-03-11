@@ -154,7 +154,7 @@ class Signal(Base):
     # Status
     is_processed = Column(Boolean, default=False, index=True)
     is_lead = Column(Boolean, default=False, index=True)
-    is_duplicate = Column(Boolean, default=False, default=False)
+    is_duplicate = Column(Boolean, default=False)
     
     # Timestamps
     posted_at = Column(DateTime, index=True)  # When posted on source
@@ -166,7 +166,7 @@ class Signal(Base):
     lead = relationship("Lead", back_populates="signals")
     
     # Extra data (platform-specific)
-    metadata = Column(JSONB, default=dict)  # PostgreSQL JSONB for performance
+    extra_metadata = Column(JSONB, default=dict)  # PostgreSQL JSONB for performance (renamed from 'metadata' - reserved)
     
     # Indexes for performance
     __table_args__ = (
@@ -185,50 +185,106 @@ class Lead(Base):
     """
     Verified leads with full contact and intent data
     
+    CORRECT LEAD INTELLIGENCE ARCHITECTURE:
+    Every lead MUST have these 5 mandatory fields:
+    - text: The lead text/content
+    - phone: Contact phone number  
+    - source: Source platform (e.g., Telegram, Reddit)
+    - url: URL to the source post/message
+    - timestamp: ISO format timestamp when lead was created
+    
+    If any are missing → lead is discarded at validation layer
+    
     This is the main 'Lead Database' table
     """
     __tablename__ = "leads"
     
     id = Column(Integer, primary_key=True, index=True)
     
-    # Source tracking
+    # ═══════════════════════════════════════════════════════════════
+    # 5 MANDATORY FIELDS - Every lead MUST have these
+    # ═══════════════════════════════════════════════════════════════
+    text = Column(Text, nullable=False, index=True, 
+                  comment="Lead text/content - MANDATORY")
+    phone = Column(String(50), nullable=False, index=True,
+                   comment="Contact phone number - MANDATORY")
+    source = Column(String(100), nullable=False, index=True,
+                    comment="Source platform (Telegram, Reddit, etc.) - MANDATORY")
+    url = Column(Text, nullable=False, index=True,
+                 comment="URL to source post/message - MANDATORY")
+    timestamp = Column(DateTime, nullable=False, index=True,
+                       comment="ISO format timestamp - MANDATORY")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # LEAD FRESHNESS - Auto-calculated from timestamp
+    # ═══════════════════════════════════════════════════════════════
+    freshness = Column(String(20), default="unknown", index=True,
+                       comment="Freshness: fresh/warm/cold/stale")
+    age_hours = Column(Float, default=0.0, index=True,
+                       comment="Age in hours since timestamp")
+    
+    # ═══════════════════════════════════════════════════════════════
+    # Source tracking (legacy support)
+    # ═══════════════════════════════════════════════════════════════
     signal_ids = Column(ARRAY(Integer), default=list)  # Source signal IDs
     sources = Column(ARRAY(String), default=list)  # ["reddit", "twitter"]
     
+    # ═══════════════════════════════════════════════════════════════
     # Contact Info (extracted from signals)
+    # ═══════════════════════════════════════════════════════════════
     name = Column(String(255))
     username = Column(String(255), index=True)
     email = Column(String(255), index=True)
-    phone = Column(String(50), index=True)
+    # Note: phone field above is the MANDATORY contact phone
     company = Column(String(255), index=True)
     job_title = Column(String(255))
     
+    # ═══════════════════════════════════════════════════════════════
     # Location
+    # ═══════════════════════════════════════════════════════════════
     location = Column(String(255), index=True)
     country = Column(String(100), default="Kenya", index=True)
     
+    # ═══════════════════════════════════════════════════════════════
     # Intent Data (from Intent Detection AI)
+    # ═══════════════════════════════════════════════════════════════
     intent_signals = Column(ARRAY(Text), default=list)  # What they said
     intent_category = Column(String(50), index=True)  # buying, researching
     intent_score = Column(Float, default=0.0, index=True)  # 0-1
     buying_urgency = Column(String(20), index=True)  # immediate, soon, future
     budget_hint = Column(String(100))  # Extracted budget mentions
     
+    # ═══════════════════════════════════════════════════════════════
+    # AI INTENT SCORING (NEW)
+    # ═══════════════════════════════════════════════════════════════
+    ai_intent_score = Column(Integer, default=0, index=True, comment="AI score 0-100")
+    ai_temperature = Column(String(20), default="REJECT", index=True, comment="HOT/WARM/COLD/REJECT")
+    ai_score_reasoning = Column(Text, comment="Explanation of AI score")
+    ai_score_breakdown = Column(JSONB, default=dict, comment="Point breakdown")
+    
+    # ═══════════════════════════════════════════════════════════════
     # Verification Data (from Lead Verification Layer)
+    # ═══════════════════════════════════════════════════════════════
     verification_score = Column(Float, default=0.0, index=True)  # 0-1
     verification_status = Column(String(20), default="pending")
     
+    # ═══════════════════════════════════════════════════════════════
     # Engagement
+    # ═══════════════════════════════════════════════════════════════
     profile_urls = Column(JSONB, default=dict)  # {"reddit": "...", "twitter": "..."}
     
+    # ═══════════════════════════════════════════════════════════════
     # Status & Workflow
+    # ═══════════════════════════════════════════════════════════════
     status = Column(String(20), default=LeadStatus.NEW, index=True)
     priority = Column(String(20), default="medium", index=True)  # low, medium, high, urgent
     
     # Scoring
     priority_score = Column(Float, default=0.0, index=True)  # Combined score for sorting
     
+    # ═══════════════════════════════════════════════════════════════
     # CRM Integration
+    # ═══════════════════════════════════════════════════════════════
     assigned_to = Column(String(255))  # Sales rep
     tags = Column(ARRAY(String), default=list)  # Custom tags
     notes = Column(Text)
@@ -239,7 +295,9 @@ class Lead(Base):
     response_at = Column(DateTime)
     converted_at = Column(DateTime)
     
+    # ═══════════════════════════════════════════════════════════════
     # Timestamps
+    # ═══════════════════════════════════════════════════════════════
     first_seen = Column(DateTime, default=datetime.utcnow, index=True)
     last_active = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -259,9 +317,29 @@ class Lead(Base):
         Index('idx_leads_country_status', 'country', 'status'),
         Index('idx_leads_urgency', 'buying_urgency', 'intent_score'),
         Index('idx_leads_first_seen', 'first_seen', 'id'),
+        # NEW: Indexes for mandatory fields
+        Index('idx_leads_source', 'source'),
+        Index('idx_leads_phone', 'phone'),
+        Index('idx_leads_timestamp', 'timestamp'),
         # GIN index for JSONB (PostgreSQL-specific)
         # Index('idx_leads_profile_urls', 'profile_urls', postgresql_using='gin'),
     )
+    
+    @property
+    def has_mandatory_fields(self) -> bool:
+        """
+        Check if this lead has all 5 mandatory fields populated.
+        
+        Returns:
+            True if text, phone, source, url, and timestamp are all present
+        """
+        return all([
+            self.text and str(self.text).strip(),
+            self.phone and str(self.phone).strip(),
+            self.source and str(self.source).strip(),
+            self.url and str(self.url).strip(),
+            self.timestamp is not None
+        ])
 
 
 class LeadActivity(Base):
@@ -282,7 +360,7 @@ class LeadActivity(Base):
     performed_by = Column(String(255))  # User who performed action
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
     
-    metadata = Column(JSONB, default=dict)  # Additional data
+    activity_metadata = Column(JSONB, default=dict)  # Additional data (renamed from 'metadata' - reserved)
 
 
 class LeadAnalytics(Base):

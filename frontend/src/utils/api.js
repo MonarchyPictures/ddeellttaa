@@ -154,10 +154,24 @@ export const exportAgentLeads = async (agentId) => {
 // LEADS API
 // ============================================================
 
-export const fetchLeads = async (limit = 10, type = null) => {
+export const fetchLeads = async (limit = 10, type = null, filters = {}) => {
   try {
     let url = `/leads?limit=${limit}`;
     if (type) url += `&type=${type}`;
+    
+    // Add source filters
+    if (filters.sources && filters.sources.length > 0) {
+      filters.sources.forEach(source => {
+        url += `&sources=${encodeURIComponent(source)}`;
+      });
+    }
+    
+    // Add freshness filters
+    if (filters.freshness && filters.freshness.length > 0) {
+      filters.freshness.forEach(fresh => {
+        url += `&freshness=${encodeURIComponent(fresh)}`;
+      });
+    }
     
     const response = await apiFetch(url);
     if (!response.ok) return [];

@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { fetchAgents, fetchAgentLeads, fetchNotifications, fetchNotificationCount, exportAgentLeads, fetchLeads } from '../utils/api';
 import { Bell, Download, RefreshCw, ChevronDown, ChevronRight, ExternalLink, ArrowLeft, Filter } from 'lucide-react';
 import LeadCard from './LeadCard';
+import SourceFilterPanel from './SourceFilterPanel';
 
 const LeadsDashboard = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -18,6 +19,12 @@ const LeadsDashboard = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [lastUpdated, setLastUpdated] = useState(new Date());
+  
+  // Filter state
+  const [activeFilters, setActiveFilters] = useState({
+    sources: ['telegram', 'facebook', 'jiji', 'reddit', 'google'],
+    freshness: ['24h', '3d', '7d']
+  });
 
   // Keep ref in sync with state for the interval closure
   useEffect(() => {
@@ -30,7 +37,7 @@ const LeadsDashboard = () => {
     try {
       if (filterType) {
          // Filtered View Logic
-         const leads = await fetchLeads(50, filterType);
+         const leads = await fetchLeads(50, filterType, activeFilters);
          setFilteredLeads(leads);
       } else {
         // Normal Agent View Logic
@@ -73,7 +80,12 @@ const LeadsDashboard = () => {
     loadData();
     const interval = setInterval(() => loadData(true), 30000); // 30s refresh
     return () => clearInterval(interval);
-  }, [filterType]); // Re-run when filterType changes
+  }, [filterType, activeFilters]); // Re-run when filterType or filters change
+  
+  // Handle filter changes
+  const handleFilterChange = (newFilters) => {
+    setActiveFilters(newFilters);
+  };
 
   const toggleAgent = async (agentId) => {
     if (expandedAgentId === agentId) {
@@ -121,7 +133,7 @@ const LeadsDashboard = () => {
         <div className="p-4 md:p-8 bg-gray-900 min-h-screen text-white">
             <div className="max-w-7xl mx-auto">
                 {/* Header */}
-                <div className="flex items-center justify-between mb-8">
+                <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center gap-4">
                         <Link to="/leads" onClick={() => setSearchParams({})} className="p-2 bg-white/5 hover:bg-white/10 rounded-full transition-colors">
                             <ArrowLeft size={24} />
@@ -140,6 +152,14 @@ const LeadsDashboard = () => {
                     >
                         <RefreshCw size={20} className={loading ? "animate-spin" : ""} />
                     </button>
+                </div>
+                
+                {/* Source Filter Panel */}
+                <div className="mb-6">
+                    <SourceFilterPanel 
+                        onFilterChange={handleFilterChange}
+                        initialFilters={activeFilters}
+                    />
                 </div>
 
                 {/* Content */}
@@ -213,6 +233,14 @@ const LeadsDashboard = () => {
           <button onClick={() => loadData()} className="underline hover:text-red-300">Retry</button>
         </div>
       )}
+      
+      {/* Source Filter Panel */}
+      <div className="mb-6">
+        <SourceFilterPanel 
+          onFilterChange={handleFilterChange}
+          initialFilters={activeFilters}
+        />
+      </div>
 
       {/* Live Notifications Ticker */}
       {notifications.length > 0 && (

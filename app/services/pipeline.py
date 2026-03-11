@@ -13,6 +13,7 @@ from app.nlp.intent_service import BuyingIntentNLP
 
 from ..db import models
 from ..utils.playwright_helpers import get_page_content
+from ..utils.lead_validation import LeadValidator, LeadValidationError
 from ..services.market_classifier import is_valid_buyer, calculate_kenyan_intent_score
 from ..intelligence.verification import verify_leads as cross_source_verify
 from ..config import PIPELINE_MODE, PROD_STRICT, PIPELINE_CATEGORY
@@ -155,13 +156,35 @@ class LeadPipeline:
         Process a single standardized raw lead from a "dumb" scraper.
         The Engine ("smart") decides if this is a buyer and extracts details.
         STRICT MODE: Enforces Kenyan Buyer Validation.
+        
+        CORRECT LEAD INTELLIGENCE ARCHITECTURE:
+        Every lead MUST have 5 mandatory fields: text, phone, source, url, timestamp
+        If any are missing → lead is discarded immediately
         """
         from app.services.validation_service import VALIDATION_SERVICE
 
-        # Normalize first
+        # ═══════════════════════════════════════════════════════════════
+        # STEP 0: MANDATORY FIELD VALIDATION (Correct Lead Architecture)
+        # ═══════════════════════════════════════════════════════════════
+        # Every lead must have: text, phone, source, url, timestamp
+        # If any are missing → discard immediately
+        is_valid, error = LeadValidator.validate(raw_data)
+        if not is_valid:
+            return self._reject(raw_data, f"Mandatory field validation failed: {error}")
+        
+        # Extract mandatory fields
+        mandatory_text = raw_data.get('text', '').strip()
+        mandatory_phone = raw_data.get('phone', '').strip()
+        mandatory_source = raw_data.get('source', '').strip()
+        mandatory_url = raw_data.get('url', '').strip()
+        mandatory_timestamp = raw_data.get('timestamp', '').strip()
+        
+        logger.info(f"[LeadValidator] ✅ Mandatory fields validated for source: {mandatory_source}")
+
+        # Normalize first (keeping mandatory fields)
         normalized = self.normalize_lead(raw_data)
-        url = normalized['url']
-        text = normalized['text'] 
+        url = normalized['url'] or mandatory_url
+        text = normalized['text'] or mandatory_text
 
         if not text or not url:
             return self._reject(raw_data, "Missing required fields (text or url)")

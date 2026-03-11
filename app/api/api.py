@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from app.api.routes import notifications, websocket
+from app.api.routes import notifications, websocket, guardian
 
 api_router = APIRouter()
 
@@ -13,6 +13,12 @@ api_router.include_router(
 api_router.include_router(
     websocket.router,
     tags=["websocket"]
+)
+
+# Guardian/System routes
+api_router.include_router(
+    guardian.router,
+    tags=["guardian"]
 )
 
 # =========================================================================
