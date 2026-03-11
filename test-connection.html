@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Delta-9 Connection Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 40px; background: #0a0a0a; color: #fff; }
+        h1 { color: #3b82f6; }
+        .status { padding: 20px; margin: 10px 0; border-radius: 8px; }
+        .success { background: #064e3b; border: 1px solid #10b981; }
+        .error { background: #450a0a; border: 1px solid #ef4444; }
+        .loading { background: #1e3a8a; border: 1px solid #3b82f6; }
+        a { color: #3b82f6; }
+        .url { font-family: monospace; background: #1f2937; padding: 4px 8px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <h1>Delta-9 Connection Test</h1>
+    <p>Testing if backend and frontend are running...</p>
+    
+    <div id="frontend-status" class="status loading">Testing Frontend (localhost:5173)...</div>
+    <div id="backend-status" class="status loading">Testing Backend (localhost:8000)...</div>
+    
+    <h2>Quick Links</h2>
+    <ul>
+        <li><a href="http://localhost:5173" target="_blank">Frontend (http://localhost:5173)</a></li>
+        <li><a href="http://localhost:8000/docs" target="_blank">API Docs (http://localhost:8000/docs)</a></li>
+        <li><a href="http://localhost:8000/api/guardian/ping" target="_blank">Health Check</a></li>
+    </ul>
+    
+    <h2>Troubleshooting</h2>
+    <ul>
+        <li>If Frontend shows error, wait 10 seconds and refresh this page</li>
+        <li>If Backend shows error, check that Python is running: <code>Get-Process python*</code></li>
+        <li>Try opening <span class="url">http://localhost:5173</span> directly in your browser</li>
+    </ul>
+
+    <script>
+        async function testFrontend() {
+            const el = document.getElementById('frontend-status');
+            try {
+                const response = await fetch('http://localhost:5173', { mode: 'no-cors', timeout: 5000 });
+                el.className = 'status success';
+                el.innerHTML = '✅ Frontend is RUNNING on <span class="url">http://localhost:5173</span>';
+            } catch (e) {
+                el.className = 'status error';
+                el.innerHTML = '❌ Frontend not responding. Check if npm is running.';
+            }
+        }
+        
+        async function testBackend() {
+            const el = document.getElementById('backend-status');
+            try {
+                const response = await fetch('http://localhost:8000/api/guardian/ping', { timeout: 5000 });
+                if (response.ok) {
+                    const data = await response.json();
+                    el.className = 'status success';
+                    el.innerHTML = '✅ Backend is RUNNING on <span class="url">http://localhost:8000</span> (Status: ' + data.status + ')';
+                } else {
+                    throw new Error('Not OK');
+                }
+            } catch (e) {
+                el.className = 'status error';
+                el.innerHTML = '❌ Backend not responding. Check if Python is running on port 8000.';
+            }
+        }
+        
+        testFrontend();
+        testBackend();
+    </script>
+</body>
+</html>
