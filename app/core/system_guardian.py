@@ -401,6 +401,34 @@ class SystemGuardian:
             if check.service == service_id or check.service == f"scraper:{service_id}":
                 return check
         return None
+    
+    def get_scraper_status(self) -> List[Dict]:
+        """Get status of all registered scrapers"""
+        status = []
+        
+        for scraper_id in self.registered_services:
+            if not scraper_id.startswith("scraper:"):
+                continue
+                
+            scraper_name = scraper_id.replace("scraper:", "")
+            metadata = self.registered_services[scraper_id].get('metadata', {})
+            
+            # Get heartbeat if available
+            heartbeat = self.heartbeats.get(scraper_name)
+            guardian_health = self.get_service_health(scraper_name)
+            
+            status.append({
+                'id': scraper_name,
+                'platform': metadata.get('platform', 'unknown'),
+                'running': heartbeat.status == "running" if heartbeat else False,
+                'leads_collected': heartbeat.leads_collected if heartbeat else 0,
+                'errors': heartbeat.errors if heartbeat else 0,
+                'last_run': heartbeat.last_run.isoformat() if heartbeat and heartbeat.last_run else None,
+                'last_heartbeat': self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+                'health': guardian_health.status.value if guardian_health else 'unknown'
+            })
+        
+        return status
 
 
 # Singleton instance
