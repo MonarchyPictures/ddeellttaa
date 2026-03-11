@@ -111,22 +111,22 @@ async def lifespan(app: FastAPI):
     
     # Initialize database
     init_db()
-    print("✅ Database initialized")
+    print("[OK] Database initialized")
     
     # Check Celery/Redis connection
     health = check_celery_health()
     if health["status"] == "ok":
-        print("✅ Celery/Redis connected")
+        print("[OK] Celery/Redis connected")
     else:
         print(f"⚠️  Celery/Redis: {health.get('message', 'not connected')}")
     
     # NEW: Initialize hardened architecture
-    print("\n🔧 Initializing Hardened Architecture...")
+    print("\n[INIT] Initializing Hardened Architecture...")
     delta9 = Delta9Application()
     success = await delta9.startup()
     
     if not success:
-        print("💥 CRITICAL: Delta-9 startup failed!")
+        print("[CRITICAL] Delta-9 startup failed!")
         raise RuntimeError("Startup failed")
     
     # Store in app state
@@ -134,13 +134,13 @@ async def lifespan(app: FastAPI):
     app.state.guardian = get_guardian()
     app.state.pipeline = get_pipeline()
     
-    print("\n🎉 DELTA-9 FULLY OPERATIONAL")
+    print("\n[OK] DELTA-9 FULLY OPERATIONAL")
     print("=" * 50)
     
     yield
     
     # Shutdown
-    print("\n👋 Delta 9 Shutting down...")
+    print("\n[BYE] Delta 9 Shutting down...")
     await delta9.shutdown()
 
 
@@ -167,7 +167,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 if os.path.isdir("frontend/dist/assets"):
     app.mount("/assets", StaticFiles(directory="frontend/dist/assets"), name="assets")
-    print("✅ Mounted /assets")
+    print("[OK] Mounted /assets")
 
 # Include API routes
 app.include_router(signal_stream_router)
